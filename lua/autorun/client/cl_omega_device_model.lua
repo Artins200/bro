@@ -1,6 +1,8 @@
 -- ============================================================================
--- Custom 3D Renderer for Rick Prime's OMEGA DEVICE + Containment Capsule +
--- Physical Built-In 3D Control Console Monitor!
+-- Custom 3D Renderer for Rick Prime's OMEGA DEVICE:
+--  1) Sleek Rounded Sci-Fi Omega Control Tablet (with side grips & top Omega antenna)
+--  2) Giant Rotating Omega Core + Fragmented Gyroscopic Containment Rings
+--  3) Stationary Omega Chamber with Prisoner Stasis Capsule & Built-in 3D Monitor
 -- ============================================================================
 
 if SERVER then
@@ -14,16 +16,16 @@ RICK_PORTAL.OmegaRenderer = RICK_PORTAL.OmegaRenderer or {}
 local Omega = RICK_PORTAL.OmegaRenderer
 Omega.Meshes = {}
 
-local matDarkMetal = CreateMaterial("RickOmega_Metal_v2", "VertexLitGeneric", {
+local matDarkMetal = CreateMaterial("RickOmega_Metal_v3", "VertexLitGeneric", {
 	["$basetexture"]        = "models/debug/debugwhite",
 	["$halflambert"]        = "1",
 	["$phong"]              = "1",
-	["$phongboost"]         = "1.2",
-	["$phongexponent"]      = "28",
-	["$phongfresnelranges"] = "[0.2 0.6 1]"
+	["$phongboost"]         = "1.35",
+	["$phongexponent"]      = "32",
+	["$phongfresnelranges"] = "[0.25 0.65 1]"
 })
 
-local matUnlit = CreateMaterial("RickOmega_Unlit_v2", "UnlitGeneric", {
+local matUnlit = CreateMaterial("RickOmega_Unlit_v3", "UnlitGeneric", {
 	["$basetexture"] = "models/debug/debugwhite",
 	["$vertexcolor"] = "1",
 	["$vertexalpha"] = "1",
@@ -34,28 +36,52 @@ local matUnlit = CreateMaterial("RickOmega_Unlit_v2", "UnlitGeneric", {
 local matGlow  = Material("sprites/light_glow02_add")
 local matLaser = Material("Effects/laser1")
 
-local function AddQuad(tris, p1, p2, p3, p4, n)
-	if not n then
-		n = (p4 - p1):Cross(p2 - p1):GetNormalized()
+local function AddSmoothQuad(tris, p1, p2, p3, p4, n1, n2, n3, n4)
+	if not n1 then
+		local fn = (p4 - p1):Cross(p2 - p1):GetNormalized()
+		n1, n2, n3, n4 = fn, fn, fn, fn
 	end
-	tris[#tris + 1] = { pos = p1, normal = n, u = 0, v = 0 }
-	tris[#tris + 1] = { pos = p2, normal = n, u = 1, v = 0 }
-	tris[#tris + 1] = { pos = p3, normal = n, u = 1, v = 1 }
+	tris[#tris + 1] = { pos = p1, normal = n1, u = 0, v = 0 }
+	tris[#tris + 1] = { pos = p2, normal = n2, u = 1, v = 0 }
+	tris[#tris + 1] = { pos = p3, normal = n3, u = 1, v = 1 }
 
-	tris[#tris + 1] = { pos = p1, normal = n, u = 0, v = 0 }
-	tris[#tris + 1] = { pos = p3, normal = n, u = 1, v = 1 }
-	tris[#tris + 1] = { pos = p4, normal = n, u = 0, v = 1 }
+	tris[#tris + 1] = { pos = p1, normal = n1, u = 0, v = 0 }
+	tris[#tris + 1] = { pos = p3, normal = n3, u = 1, v = 1 }
+	tris[#tris + 1] = { pos = p4, normal = n4, u = 0, v = 1 }
 end
 
-local function BuildSimpleBox(lx, ly, lz)
+local function BuildRoundedBox3D(lx, ly, lz, cornerR)
 	local tris = {}
 	local hx, hy, hz = lx * 0.5, ly * 0.5, lz * 0.5
-	AddQuad(tris, Vector(hx,-hy,-hz), Vector(hx,hy,-hz), Vector(hx,hy,hz), Vector(hx,-hy,hz), Vector(1,0,0))
-	AddQuad(tris, Vector(-hx,hy,-hz), Vector(-hx,-hy,-hz), Vector(-hx,-hy,hz), Vector(-hx,hy,hz), Vector(-1,0,0))
-	AddQuad(tris, Vector(hx,hy,-hz), Vector(-hx,hy,-hz), Vector(-hx,hy,hz), Vector(hx,hy,hz), Vector(0,1,0))
-	AddQuad(tris, Vector(-hx,-hy,-hz), Vector(hx,-hy,-hz), Vector(hx,-hy,hz), Vector(-hx,-hy,hz), Vector(0,-1,0))
-	AddQuad(tris, Vector(-hx,-hy,hz), Vector(hx,-hy,hz), Vector(hx,hy,hz), Vector(-hx,hy,hz), Vector(0,0,1))
-	AddQuad(tris, Vector(-hx,hy,-hz), Vector(hx,hy,-hz), Vector(hx,-hy,-hz), Vector(-hx,-hy,-hz), Vector(0,0,-1))
+	local ringSegs = 28
+	local r = math.min(cornerR or 0.35, hy * 0.4, hz * 0.4)
+
+	local function Pt(xVal, a)
+		local ca, sa = math.cos(a), math.sin(a)
+		local iy, iz = hy - r, hz - r
+		local py = (ca >= 0 and iy or -iy) + ca * r
+		local pz = (sa >= 0 and iz or -iz) + sa * r
+		return Vector(xVal, py, pz), Vector(0, ca, sa):GetNormalized()
+	end
+
+	for i = 0, ringSegs - 1 do
+		local a1 = (i / ringSegs) * math.pi * 2
+		local a2 = ((i + 1) / ringSegs) * math.pi * 2
+		local p1B, n1 = Pt(-hx, a1)
+		local p1F, _  = Pt( hx, a1)
+		local p2F, n2 = Pt( hx, a2)
+		local p2B, _  = Pt(-hx, a2)
+		AddSmoothQuad(tris, p1B, p1F, p2F, p2B, n1, n1, n2, n2)
+
+		tris[#tris + 1] = { pos = Vector(hx, 0, 0),  normal = Vector(1, 0, 0),  u = 0.5, v = 0.5 }
+		tris[#tris + 1] = { pos = p2F,               normal = Vector(1, 0, 0),  u = 1,   v = 1 }
+		tris[#tris + 1] = { pos = p1F,               normal = Vector(1, 0, 0),  u = 0,   v = 1 }
+
+		tris[#tris + 1] = { pos = Vector(-hx, 0, 0), normal = Vector(-1, 0, 0), u = 0.5, v = 0.5 }
+		tris[#tris + 1] = { pos = p1B,               normal = Vector(-1, 0, 0), u = 0,   v = 1 }
+		tris[#tris + 1] = { pos = p2B,               normal = Vector(-1, 0, 0), u = 1,   v = 1 }
+	end
+
 	local m = Mesh()
 	m:BuildFromTriangles(tris)
 	return m
@@ -63,7 +89,7 @@ end
 
 local function BuildCylinderZ(radius, height, segs, openEnds)
 	local tris = {}
-	segs = segs or 24
+	segs = segs or 28
 	local hz = height * 0.5
 	for i = 0, segs - 1 do
 		local a1 = (i / segs) * math.pi * 2
@@ -78,18 +104,12 @@ local function BuildCylinderZ(radius, height, segs, openEnds)
 		local p2T = Vector(c2 * radius, s2 * radius,  hz)
 		local p1T = Vector(c1 * radius, s1 * radius,  hz)
 
-		tris[#tris + 1] = { pos = p1B, normal = n1, u = 0, v = 1 }
-		tris[#tris + 1] = { pos = p2B, normal = n2, u = 1, v = 1 }
-		tris[#tris + 1] = { pos = p2T, normal = n2, u = 1, v = 0 }
-
-		tris[#tris + 1] = { pos = p1B, normal = n1, u = 0, v = 1 }
-		tris[#tris + 1] = { pos = p2T, normal = n2, u = 1, v = 0 }
-		tris[#tris + 1] = { pos = p1T, normal = n1, u = 0, v = 0 }
+		AddSmoothQuad(tris, p1B, p2B, p2T, p1T, n1, n2, n2, n1)
 
 		if not openEnds then
-			tris[#tris + 1] = { pos = Vector(0, 0, hz), normal = Vector(0, 0, 1), u = 0.5, v = 0.5 }
-			tris[#tris + 1] = { pos = p1T,              normal = Vector(0, 0, 1), u = 0,   v = 0 }
-			tris[#tris + 1] = { pos = p2T,              normal = Vector(0, 0, 1), u = 1,   v = 0 }
+			tris[#tris + 1] = { pos = Vector(0, 0, hz),  normal = Vector(0, 0, 1),  u = 0.5, v = 0.5 }
+			tris[#tris + 1] = { pos = p1T,               normal = Vector(0, 0, 1),  u = 0,   v = 0 }
+			tris[#tris + 1] = { pos = p2T,               normal = Vector(0, 0, 1),  u = 1,   v = 0 }
 
 			tris[#tris + 1] = { pos = Vector(0, 0, -hz), normal = Vector(0, 0, -1), u = 0.5, v = 0.5 }
 			tris[#tris + 1] = { pos = p2B,               normal = Vector(0, 0, -1), u = 1,   v = 0 }
@@ -103,8 +123,8 @@ end
 
 local function BuildSphereMesh(radius, segs, rings)
 	local tris = {}
-	segs  = segs or 20
-	rings = rings or 14
+	segs  = segs or 24
+	rings = rings or 16
 
 	for r = 0, rings - 1 do
 		local phi1 = -math.pi * 0.5 + (r / rings) * math.pi
@@ -120,13 +140,7 @@ local function BuildSphereMesh(radius, segs, rings)
 			local n22 = Vector(math.cos(a2) * cp2, math.sin(a2) * cp2, sp2)
 			local n12 = Vector(math.cos(a1) * cp2, math.sin(a1) * cp2, sp2)
 
-			tris[#tris + 1] = { pos = n11 * radius, normal = n11, u = 0, v = 0 }
-			tris[#tris + 1] = { pos = n21 * radius, normal = n21, u = 1, v = 0 }
-			tris[#tris + 1] = { pos = n22 * radius, normal = n22, u = 1, v = 1 }
-
-			tris[#tris + 1] = { pos = n11 * radius, normal = n11, u = 0, v = 0 }
-			tris[#tris + 1] = { pos = n22 * radius, normal = n22, u = 1, v = 1 }
-			tris[#tris + 1] = { pos = n12 * radius, normal = n12, u = 0, v = 1 }
+			AddSmoothQuad(tris, n11 * radius, n21 * radius, n22 * radius, n12 * radius, n11, n21, n22, n12)
 		end
 	end
 
@@ -143,7 +157,7 @@ local function BuildSegmentedArcRing(radius, thickness, width, arcCoverageTable)
 
 	for _, segRange in ipairs(arcCoverageTable) do
 		local degStart, degEnd, extraFin = segRange[1], segRange[2], segRange[3]
-		local steps = math.max(4, math.floor((degEnd - degStart) / 7))
+		local steps = math.max(5, math.floor((degEnd - degStart) / 6))
 
 		for s = 0, steps - 1 do
 			local a1 = math.rad(degStart + (s / steps) * (degEnd - degStart))
@@ -163,13 +177,13 @@ local function BuildSegmentedArcRing(radius, thickness, width, arcCoverageTable)
 			local pOut2B = Vector(c2 * curOut, s2 * curOut, -hz)
 			local pOut1B = Vector(c1 * curOut, s1 * curOut, -hz)
 
-			AddQuad(tris, pIn1T, pOut1T, pOut2T, pIn2T, Vector(0, 0, 1))
-			AddQuad(tris, pIn2B, pOut2B, pOut1B, pIn1B, Vector(0, 0, -1))
-			AddQuad(tris, pOut1B, pOut2B, pOut2T, pOut1T, Vector((c1+c2)*0.5, (s1+s2)*0.5, 0):GetNormalized())
-			AddQuad(tris, pIn2B,  pIn1B,  pIn1T,  pIn2T,  Vector(-(c1+c2)*0.5, -(s1+s2)*0.5, 0):GetNormalized())
+			AddSmoothQuad(tris, pIn1T, pOut1T, pOut2T, pIn2T)
+			AddSmoothQuad(tris, pIn2B, pOut2B, pOut1B, pIn1B)
+			AddSmoothQuad(tris, pOut1B, pOut2B, pOut2T, pOut1T, Vector(c1,s1,0), Vector(c2,s2,0), Vector(c2,s2,0), Vector(c1,s1,0))
+			AddSmoothQuad(tris, pIn2B,  pIn1B,  pIn1T,  pIn2T,  Vector(-c2,-s2,0), Vector(-c1,-s1,0), Vector(-c1,-s1,0), Vector(-c2,-s2,0))
 
-			if s == 0 then AddQuad(tris, pIn1B, pOut1B, pOut1T, pIn1T) end
-			if s == steps - 1 then AddQuad(tris, pOut2B, pIn2B, pIn2T, pOut2T) end
+			if s == 0 then AddSmoothQuad(tris, pIn1B, pOut1B, pOut1T, pIn1T) end
+			if s == steps - 1 then AddSmoothQuad(tris, pOut2B, pIn2B, pIn2T, pOut2T) end
 		end
 	end
 
@@ -181,9 +195,9 @@ end
 function Omega:EnsureMeshes()
 	if self.Meshes.Ready then return end
 
-	self.Meshes.CoreSphere   = BuildSphereMesh(10.0, 22, 14)
-	self.Meshes.OuterShell   = BuildSphereMesh(11.4, 20, 12)
-	self.Meshes.NodeOrb      = BuildSphereMesh(1.3, 10, 6)
+	self.Meshes.CoreSphere   = BuildSphereMesh(10.0, 24, 16)
+	self.Meshes.OuterShell   = BuildSphereMesh(11.4, 22, 14)
+	self.Meshes.NodeOrb      = BuildSphereMesh(1.3, 12, 8)
 
 	self.Meshes.RingInner = BuildSegmentedArcRing(14.2, 2.2, 2.0, {
 		{ 12, 118, true }, { 148, 242, false }, { 276, 344, true }
@@ -195,13 +209,17 @@ function Omega:EnsureMeshes()
 		{ 25, 140, true }, { 175, 265, false }, { 292, 355, true }
 	})
 
+	-- Sleek Rounded Two-Handed Omega Control Tablet + Rubberized Side Grips!
+	self.Meshes.TabletChassis = BuildRoundedBox3D(0.75, 11.8, 7.6, 0.55)
+	self.Meshes.TabletGrip    = BuildRoundedBox3D(1.05, 1.15, 6.4, 0.35)
+
 	-- Station Platform, Prisoner Stasis Capsule & Built-in Physical Control Monitor!
-	self.Meshes.PlatformBase  = BuildCylinderZ(76, 8, 32, false)
-	self.Meshes.CapsuleBase   = BuildCylinderZ(42, 6, 28, false)
-	self.Meshes.CapsuleGlass  = BuildCylinderZ(39, 108, 28, true)
-	self.Meshes.Pillar        = BuildSimpleBox(10, 10, 112)
-	self.Meshes.ConsoleStand  = BuildSimpleBox(8, 16, 48)
-	self.Meshes.MonitorHousing = BuildSimpleBox(5, 48, 34)
+	self.Meshes.PlatformBase   = BuildCylinderZ(76, 8, 32, false)
+	self.Meshes.CapsuleBase    = BuildCylinderZ(42, 6, 28, false)
+	self.Meshes.CapsuleGlass   = BuildCylinderZ(39, 108, 28, true)
+	self.Meshes.Pillar         = BuildRoundedBox3D(10, 10, 112, 1.5)
+	self.Meshes.ConsoleStand   = BuildRoundedBox3D(8, 16, 48, 1.2)
+	self.Meshes.MonitorHousing = BuildRoundedBox3D(5.5, 49, 35, 1.8)
 
 	self.Meshes.Ready = true
 end
@@ -220,6 +238,24 @@ Omega.DrawMesh = function(im, origin, ang, localPos, localAng, scaleVec, mat, r,
 	cam.PushModelMatrix(mtx)
 	im:Draw()
 	cam.PopModelMatrix()
+end
+
+-- Draws the sleek sci-fi Two-Handed Omega Tablet with glowing mini-core emitter on top!
+function Omega:DrawOmegaTabletBody(origin, ang, scale, chargeLevel)
+	self:EnsureMeshes()
+	scale = scale or 1.0
+	local sVec    = Vector(scale, scale, scale)
+	local zeroAng = Angle(0, 0, 0)
+
+	-- Main dark-titanium rounded tablet body
+	self.DrawMesh(self.Meshes.TabletChassis, origin, ang, Vector(0, 0, 0), zeroAng, sVec, matDarkMetal, 42, 40, 58, 255)
+	-- Left & Right ergonomic side bumper grips (where the hands hold it!)
+	self.DrawMesh(self.Meshes.TabletGrip, origin, ang, Vector(-0.05 * scale,  5.65 * scale, 0), zeroAng, sVec, matDarkMetal, 64, 56, 88, 255)
+	self.DrawMesh(self.Meshes.TabletGrip, origin, ang, Vector(-0.05 * scale, -5.65 * scale, 0), zeroAng, sVec, matDarkMetal, 64, 56, 88, 255)
+
+	-- Miniature rotating Omega Core emitter perched right on top of the tablet bezel!
+	local topEmitterWorld = LocalToWorld(Vector(0, 0, 4.95 * scale), zeroAng, origin, ang)
+	self:DrawOmegaCore(topEmitterWorld, ang, 0.065 * scale, chargeLevel or 0, 0)
 end
 
 function Omega:DrawOmegaCore(origin, ang, scale, chargeLevel, burstLevel)
@@ -289,30 +325,24 @@ function Omega:DrawOmegaCore(origin, ang, scale, chargeLevel, burstLevel)
 	render.SetColorModulation(1, 1, 1)
 end
 
--- Draws the full floor-standing Omega Device Chamber + Glass Containment Capsule + Built-in 3D Monitor Housing!
 function Omega:DrawOmegaChamberStructure(origin, ang, chargeLevel, burstLevel, hasPrisoner)
 	self:EnsureMeshes()
-	local zeroAng = Angle(0, 0, 0)
+	local zeroAng  = Angle(0, 0, 0)
 	local oneScale = Vector(1, 1, 1)
 
-	-- 1. Heavy Dark-Indigo Base Platform & Capsule Pedestal on ground
 	self.DrawMesh(self.Meshes.PlatformBase, origin, ang, Vector(0, 0, 4), zeroAng, oneScale, matDarkMetal, 34, 32, 46, 255)
 	self.DrawMesh(self.Meshes.CapsuleBase,  origin, ang, Vector(-10, 0, 10), zeroAng, oneScale, matDarkMetal, 54, 46, 76, 255)
 	self.DrawMesh(self.Meshes.CapsuleBase,  origin, ang, Vector(-10, 0, 118), zeroAng, oneScale, matDarkMetal, 54, 46, 76, 255)
 
-	-- 2. Two Structural Support Pylons flanking the capsule up to the overhead Omega Core
 	self.DrawMesh(self.Meshes.Pillar, origin, ang, Vector(-10,  46, 64), zeroAng, oneScale, matDarkMetal, 42, 38, 58, 255)
 	self.DrawMesh(self.Meshes.Pillar, origin, ang, Vector(-10, -46, 64), zeroAng, oneScale, matDarkMetal, 42, 38, 58, 255)
 
-	-- 3. Physical Angled Control Pedestal & Wide Monitor Housing in front (+X = 64)
 	self.DrawMesh(self.Meshes.ConsoleStand,   origin, ang, Vector(58, 0, 24), zeroAng, oneScale, matDarkMetal, 38, 36, 52, 255)
 	self.DrawMesh(self.Meshes.MonitorHousing, origin, ang, Vector(62, 0, 52), Angle(-28, 0, 0), oneScale, matDarkMetal, 28, 28, 40, 255)
 
-	-- 4. Overhead Giant Rotating Omega Core (suspended right above the prisoner stasis capsule at Z = 178!)
 	local coreWorld = LocalToWorld(Vector(-10, 0, 178), zeroAng, origin, ang)
 	self:DrawOmegaCore(coreWorld, ang, 2.35, chargeLevel, burstLevel)
 
-	-- If firing/charging, blast a massive vertical blue Omega beam straight down into the prisoner capsule!
 	if chargeLevel > 0.02 or burstLevel > 0.02 then
 		local capCenter = LocalToWorld(Vector(-10, 0, 62), zeroAng, origin, ang)
 		render.SetMaterial(matLaser)
@@ -321,7 +351,6 @@ function Omega:DrawOmegaChamberStructure(origin, ang, chargeLevel, burstLevel, h
 		render.DrawBeam(coreWorld, capCenter, w * 0.5, 0, 1, Color(240, 252, 255, 255))
 	end
 
-	-- 5. Translucent Cyan Forcefield Stasis Capsule Cylinder (drawn last so prisoner inside is clearly visible!)
 	render.OverrideDepthEnable(true, false)
 	local glassAlpha = hasPrisoner and (95 + math.sin(CurTime() * 7) * 20) or 52
 	self.DrawMesh(self.Meshes.CapsuleGlass, origin, ang, Vector(-10, 0, 64), zeroAng, oneScale, matUnlit, 65, 210, 255, glassAlpha)

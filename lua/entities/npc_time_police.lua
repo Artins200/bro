@@ -155,13 +155,14 @@ if CLIENT then
 		local pos       = self:GetPos()
 		local ang       = self:GetAngles()
 		local swingFrac = math.Clamp(1.0 - (ct - self:GetLastSwingTime()) * 3.2, 0, 1)
+		local speedFrac = math.Clamp(self:GetVelocity():Length2D() / 380, 0, 1)
 		local txt       = self:GetSpeechText()
 
 		-- Purple 4th-dimensional aura underneath floating Time Cop
 		render.SetMaterial(matGlow)
 		render.DrawSprite(pos + Vector(0, 0, 26), 65, 65, Color(195, 85, 255, 95))
 
-		RICK_PORTAL.TimePoliceRenderer:DrawTimeCop(pos, ang, txt ~= "", swingFrac)
+		RICK_PORTAL.TimePoliceRenderer:DrawTimeCop(pos, ang, txt ~= "", swingFrac, speedFrac)
 
 		-- Overhead comic speech bubble ("НУ ВСЁ, УЕБОК, НА СРОК!")
 		if txt and txt ~= "" then

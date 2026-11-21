@@ -56,6 +56,7 @@ end
 if SERVER then
 	util.AddNetworkString("RickOmega_SyncErased")
 	util.AddNetworkString("RickOmega_VaporizeFX")
+	util.AddNetworkString("RickTime_RiftFX")
 
 	-- Resources
 	resource.AddSingleFile("materials/rick_portal/portal_swirl.png")
@@ -65,11 +66,11 @@ if SERVER then
 	resource.AddSingleFile("materials/entities/ent_rick_portal.png")
 	resource.AddSingleFile("materials/entities/ent_omega_device.png")
 	resource.AddSingleFile("materials/entities/weapon_omega_device.png")
-	resource.AddSingleFile("materials/entities/weapon_time_tablet.png")
+	resource.AddSingleFile("materials/entities/weapon_chrono_gun.png")
 	resource.AddSingleFile("materials/entities/npc_time_police.png")
 	resource.AddSingleFile("materials/vgui/entities/weapon_rick_portalgun.png")
 	resource.AddSingleFile("materials/vgui/entities/weapon_omega_device.png")
-	resource.AddSingleFile("materials/vgui/entities/weapon_time_tablet.png")
+	resource.AddSingleFile("materials/vgui/entities/weapon_chrono_gun.png")
 
 	resource.AddSingleFile("sound/rick_portal/portal_shoot.wav")
 	resource.AddSingleFile("sound/rick_portal/portal_open.wav")
@@ -216,17 +217,24 @@ if SERVER then
 
 	function RICK_PORTAL.SyncWeaponTimeState(ply, wep)
 		if not IsValid(ply) then return end
-		local st = RICK_PORTAL.ActiveTimeTravelers[ply]
-		local tab = IsValid(wep) and wep or ply:GetWeapon("weapon_time_tablet")
-		if IsValid(tab) and tab:GetClass() == "weapon_time_tablet" then
+		local st  = RICK_PORTAL.ActiveTimeTravelers[ply]
+		local gun = IsValid(wep) and wep or ply:GetWeapon("weapon_chrono_gun")
+		if IsValid(gun) and gun:GetClass() == "weapon_chrono_gun" then
 			if st and st.inPast then
-				tab:SetInPast(true)
-				tab:SetPastDeadline(st.deadline)
+				gun:SetInPast(true)
+				gun:SetPastDeadline(st.deadline)
 			else
-				tab:SetInPast(false)
-				tab:SetPastDeadline(0)
+				gun:SetInPast(false)
+				gun:SetPastDeadline(0)
 			end
 		end
+	end
+
+	local function BroadcastTimeRift(pos, isReturn)
+		net.Start("RickTime_RiftFX")
+			net.WriteVector(pos)
+			net.WriteBool(isReturn and true or false)
+		net.Broadcast()
 	end
 
 	function RICK_PORTAL.ClearPlayerTimeTravelState(ply, keepPolice)
@@ -295,6 +303,9 @@ if SERVER then
 			clone:Activate()
 		end
 
+		BroadcastTimeRift(presentPos + Vector(0, 0, 36), false)
+		BroadcastTimeRift(arrivePos  + Vector(0, 0, 36), false)
+
 		ply:SetPos(arrivePos)
 		ply:SetEyeAngles((pastStartPos + Vector(0, 0, 48) - (arrivePos + Vector(0, 0, 60))):Angle())
 		ply:EmitSound("RickTime.Warp")
@@ -313,7 +324,7 @@ if SERVER then
 		}
 
 		RICK_PORTAL.SyncWeaponTimeState(ply, wep)
-		ply:ChatPrint(string.format("[ПЛАНШЕТ ВРЕМЕНИ] Вы прыгнули на %d сек. в прошлое! Перед вами — ВЫ ИЗ ПРОШЛОГО! У вас ровно 35 секунд, чтобы вернуться!", secondsBack))
+		ply:ChatPrint(string.format("[ПУШКА ВРЕМЕНИ] Вы откатились на %d сек. в прошлое! Перед вами — ВЫ ИЗ ПРОШЛОГО! У вас ровно 35 сек., чтобы вернуться (ПКМ)!", secondsBack))
 	end
 
 	function RICK_PORTAL.ReturnToPresentTimeline(ply, wep)
@@ -322,16 +333,19 @@ if SERVER then
 		if not st or not st.inPast then return end
 
 		if st.policeSpawned then
-			ply:ChatPrint("[ПОЛИЦИЯ ВРЕМЕНИ]: Поздно жать кнопки, уебок! Твоё время вышло — ты под арестом!")
+			ply:ChatPrint("[ПОЛИЦИЯ ВРЕМЕНИ]: Поздно валить в настоящее, уебок! Время вышло — ты под арестом!")
 			ply:EmitSound("buttons/button10.wav", 75, 85, 0.8)
 			return
 		end
+
+		BroadcastTimeRift(ply:GetPos() + Vector(0, 0, 36), true)
+		BroadcastTimeRift(st.presentPos + Vector(0, 0, 36), true)
 
 		ply:SetPos(st.presentPos)
 		ply:SetEyeAngles(st.presentAng)
 		ply:EmitSound("RickTime.Warp")
 		ply:ScreenFade(SCREENFADE.IN, Color(85, 235, 255, 160), 0.50, 0.05)
-		ply:ChatPrint("[ПЛАНШЕТ ВРЕМЕНИ] Вы вовремя вернулись в своё настоящее время! Полиция Времени не заметила пробоя.")
+		ply:ChatPrint("[ПУШКА ВРЕМЕНИ] Вы вовремя вернулись в своё настоящее время! Полиция Времени не заметила пробоя.")
 
 		RICK_PORTAL.ClearPlayerTimeTravelState(ply, false)
 	end
@@ -459,12 +473,76 @@ else
 	local matLaser = Material("Effects/laser1")
 	local matGlow  = Material("sprites/light_glow02_add")
 
+	RICK_PORTAL.ActiveTimeRifts = RICK_PORTAL.ActiveTimeRifts or {}
+
+	net.Receive("RickTime_RiftFX", function()
+		local pos      = net.ReadVector()
+		local isReturn = net.ReadBool()
+
+		table.insert(RICK_PORTAL.ActiveTimeRifts, {
+			pos      = pos,
+			isReturn = isReturn,
+			birth    = CurTime(),
+			dur      = 0.95
+		})
+
+		local em = ParticleEmitter(pos, false)
+		if IsValid(em) then
+			for i = 1, 36 do
+				local a   = (i / 36) * math.pi * 2
+				local dir = Vector(math.cos(a), math.sin(a), math.Rand(-0.5, 0.5)):GetNormalized()
+				local p   = em:Add(matParticleGlow, pos + dir * 8)
+				if p then
+					p:SetVelocity(dir * math.Rand(110, 260))
+					p:SetDieTime(math.Rand(0.5, 0.9))
+					p:SetStartAlpha(255)
+					p:SetEndAlpha(0)
+					p:SetStartSize(math.Rand(14, 26))
+					p:SetEndSize(0)
+					if isReturn then p:SetColor(95, 240, 255) else p:SetColor(225, 95, 255) end
+					p:SetAirResistance(90)
+				end
+			end
+			em:Finish()
+		end
+	end)
+
 	hook.Add("PostDrawTranslucentRenderables", "RickOmega_DrawVaporizeArcs", function(bDepth, bSkybox)
 		if bSkybox then return end
+		local ct = CurTime()
+
+		-- 1) Draw Chrono-Rewind Temporal Rifts (expanding clock-ring shockwaves!)
+		local rifts = RICK_PORTAL.ActiveTimeRifts
+		if rifts and #rifts > 0 then
+			for i = #rifts, 1, -1 do
+				local rf = rifts[i]
+				local t  = (ct - rf.birth) / rf.dur
+				if t >= 1 then
+					table.remove(rifts, i)
+				else
+					local inv = 1.0 - t
+					local col = rf.isReturn and Color(95, 240, 255, 240 * inv) or Color(225, 95, 255, 240 * inv)
+					render.SetMaterial(matGlow)
+					render.DrawSprite(rf.pos, 180 * (0.3 + t) * inv, 180 * (0.3 + t) * inv, col)
+
+					render.SetMaterial(matLaser)
+					local ringR = 15 + t * 115
+					local segs  = 24
+					for s = 0, segs - 1 do
+						local a1 = (s / segs) * math.pi * 2 + ct * 6
+						local a2 = ((s + 1) / segs) * math.pi * 2 + ct * 6
+						local p1 = rf.pos + Vector(math.cos(a1) * ringR, math.sin(a1) * ringR, 0)
+						local p2 = rf.pos + Vector(math.cos(a2) * ringR, math.sin(a2) * ringR, 0)
+						render.DrawBeam(p1, p2, 10 * inv, 0, 1, col)
+					end
+				end
+			end
+		end
+
+		-- 2) Draw Omega Vaporize Lightning Arcs
 		local list = RICK_PORTAL.ActiveVaporizeArcs
 		if not list or #list == 0 then return end
 
-		local ct = CurTime()
 		for i = #list, 1, -1 do
 			local fx = list[i]
 			local t  = (ct - fx.birth) / fx.dur
