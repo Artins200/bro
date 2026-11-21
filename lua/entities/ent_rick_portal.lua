@@ -6,7 +6,7 @@ ENT.PrintName   = "Rick's Green Portal"
 ENT.Author      = "Rick Sanchez (C-137)"
 ENT.Category    = "Rick and Morty"
 ENT.Spawnable   = true
-ENT.RenderGroup = RENDERGROUP_TRANSLUCENT
+ENT.RenderGroup = RENDERGROUP_BOTH
 
 function ENT:SetupDataTables()
 	self:NetworkVar("Entity", 0, "LinkedPortal")
@@ -17,10 +17,9 @@ function ENT:SetupDataTables()
 	self:NetworkVar("Bool",   2, "IsMidAir")
 end
 
--- Duration of the green liquid -> portal transformation (in seconds)
 local MORPH_DURATION = 0.88
 local CLOSE_DURATION = 0.42
-local PORTAL_RADIUS  = 50
+local PORTAL_RADIUS  = 52
 
 if SERVER then
 	function ENT:SpawnFunction(ply, tr, className)
@@ -43,7 +42,7 @@ if SERVER then
 
 		self:SetMoveType(MOVETYPE_NONE)
 		self:SetSolid(SOLID_BBOX)
-		self:SetCollisionBounds(Vector(-24, -48, -56), Vector(24, 48, 56))
+		self:SetCollisionBounds(Vector(-28, -50, -58), Vector(28, 50, 58))
 		self:SetTrigger(true)
 		self:SetCollisionGroup(COLLISION_GROUP_WEAPON)
 
@@ -72,19 +71,16 @@ if SERVER then
 		self:SetLinkedPortal(NULL)
 	end
 
-	-- Computes safe exit position & velocity when an entity steps into this portal
 	function ENT:TeleportEntity(ent)
 		if not IsValid(ent) then return end
 		if self:GetIsClosing() then return end
 
-		-- Wait until liquid has mostly morphed into a portal (~65% of morph)
 		if (CurTime() - self:GetBirthTime()) < (MORPH_DURATION * 0.65) then return end
 
 		local dest = self:GetLinkedPortal()
 		if not IsValid(dest) or dest:GetIsClosing() then return end
 		if (CurTime() - dest:GetBirthTime()) < (MORPH_DURATION * 0.55) then return end
 
-		-- Per-entity cooldown so there is no infinite ping-pong loop
 		local now = CurTime()
 		if (self.TeleportCooldowns[ent] or 0) > now then return end
 		if (dest.TeleportCooldowns and (dest.TeleportCooldowns[ent] or 0) > now) then return end
@@ -93,25 +89,32 @@ if SERVER then
 		local isNPC = ent:IsNPC() or ent:IsNextBot()
 		local phys = ent:GetPhysicsObject()
 		if not isPlayer and not isNPC and not IsValid(phys) then return end
-		if ent:GetClass() == "ent_rick_portal" or ent:GetClass() == "ent_rick_portal_blob" then return end
+		if ent:GetClass() == "ent_rick_portal" or ent:GetClass() == "ent_rick_portal_blob" or ent:GetClass() == "ent_omega_device" then return end
 
 		self.TeleportCooldowns[ent] = now + 0.55
 		dest.TeleportCooldowns = dest.TeleportCooldowns or {}
 		dest.TeleportCooldowns[ent] = now + 0.55
 
 		local outNormal = dest:GetForward()
-		local exitPos = dest:GetPos() + outNormal * 44
+		-- Determine which side of a freestanding/mid-air portal the entity entered from,
+		-- or exit away from wall if destination is on a wall!
+		if dest:GetIsMidAir() then
+			local enterRel = (ent:WorldSpaceCenter() - self:GetPos()):Dot(self:GetForward())
+			if enterRel < 0 then
+				outNormal = -dest:GetForward()
+			end
+		end
 
-		-- Keep players upright & clear of floors/walls at destination!
+		local exitPos = dest:GetPos() + outNormal * 46
+
 		if isPlayer or isNPC then
 			if dest:GetIsFloorPortal() then
 				exitPos = dest:GetPos() + Vector(0, 0, 18)
+				outNormal = Vector(0, 0, 1)
 			elseif outNormal.z < -0.55 then
-				-- Ceiling portal: drop cleanly underneath
 				exitPos = dest:GetPos() + outNormal * 76
 			else
-				-- Wall or mid-air portal: place 46 units in front, ensure feet aren't buried in ground
-				exitPos = dest:GetPos() + outNormal * 46 - Vector(0, 0, 34)
+				exitPos = dest:GetPos() + outNormal * 48 - Vector(0, 0, 34)
 				local trFloor = util.TraceLine({
 					start = exitPos + Vector(0, 0, 36),
 					endpos = exitPos - Vector(0, 0, 12),
@@ -122,7 +125,6 @@ if SERVER then
 				end
 			end
 
-			-- Final hull check so player never gets stuck inside geometry
 			if isPlayer then
 				local mins, maxs = ent:GetHull()
 				local trHull = util.TraceHull({
@@ -139,14 +141,12 @@ if SERVER then
 			end
 		end
 
-		-- Preserve & redirect momentum through the portal (classic portal physics!)
 		local inVel = isPlayer and ent:GetVelocity() or (IsValid(phys) and phys:GetVelocity() or ent:GetVelocity())
 		local speed = math.max(inVel:Length(), dest:GetIsFloorPortal() and 340 or 230)
 		local outVel = outNormal * speed
 
 		if isPlayer then
 			ent:SetPos(exitPos)
-			-- Align player's horizontal view direction with exit portal normal
 			local flatNormal = Vector(outNormal.x, outNormal.y, 0)
 			if flatNormal:LengthSqr() > 0.05 then
 				local newEye = flatNormal:Angle()
@@ -194,17 +194,16 @@ if SERVER then
 			return
 		end
 
-		-- Proximity scan so players walking/jumping into floor, mid-air, or wall portals ALWAYS trigger reliably!
 		if IsValid(self:GetLinkedPortal()) and (now - self:GetBirthTime()) >= (MORPH_DURATION * 0.65) then
 			local myPos = self:GetPos()
 			local myFwd = self:GetForward()
-			for _, ent in ipairs(ents.FindInSphere(myPos, PORTAL_RADIUS * 0.92)) do
+			for _, ent in ipairs(ents.FindInSphere(myPos, PORTAL_RADIUS * 0.95)) do
 				if ent ~= self and (ent:IsPlayer() or ent:IsNPC() or IsValid(ent:GetPhysicsObject())) then
 					local center = ent:WorldSpaceCenter()
 					local rel = center - myPos
 					local planeDist = math.abs(rel:Dot(myFwd))
 					local radialDist = (rel - myFwd * rel:Dot(myFwd)):Length()
-					if planeDist < 34 and radialDist < (PORTAL_RADIUS * 0.88) then
+					if planeDist < 36 and radialDist < (PORTAL_RADIUS * 0.90) then
 						self:TeleportEntity(ent)
 					end
 				end
@@ -222,7 +221,15 @@ if CLIENT then
 	local matBlob       = Material("rick_portal/liquid_blob.png", "smooth mips")
 	local matGlow       = Material("sprites/light_glow02_add")
 
-	local unlitPolyMat = CreateMaterial("RickPortal_FluidPoly_v1", "UnlitGeneric", {
+	-- Built-in VTF particle material for ParticleEmitter (zero purple-black checkerboard missing textures!)
+	local matSplashVTF = CreateMaterial("RickPortal_SplashVTF_v2", "UnlitGeneric", {
+		["$basetexture"] = "sprites/light_glow02",
+		["$additive"]    = "1",
+		["$vertexcolor"] = "1",
+		["$vertexalpha"] = "1"
+	})
+
+	local unlitPolyMat = CreateMaterial("RickPortal_FluidPoly_v2", "UnlitGeneric", {
 		["$basetexture"] = "color/white",
 		["$vertexcolor"] = "1",
 		["$vertexalpha"] = "1",
@@ -230,7 +237,6 @@ if CLIENT then
 		["$nocull"]      = "1"
 	})
 
-	-- Smooth elastic ease-out for organic liquid expansion
 	local function EaseOutBack(t)
 		local c1 = 1.45
 		local c3 = c1 + 1
@@ -243,8 +249,6 @@ if CLIENT then
 		surface.DrawTexturedRectRotated(cx, cy, w, h, rotDeg)
 	end
 
-	-- Draws an organic, wobbling multi-vertex liquid silhouette during fluid -> portal morph
-	-- AND as a living organic rim around the active portal!
 	local function DrawOrganicLiquidDisk(cx, cy, rx, ry, ct, seed, wobbleAmt, col, segs)
 		segs = segs or 36
 		local poly = {}
@@ -263,7 +267,6 @@ if CLIENT then
 
 		surface.SetMaterial(unlitPolyMat)
 		surface.SetDrawColor(col.r, col.g, col.b, col.a)
-		-- Draw triangle fan so concave waves never glitch!
 		for i = 2, #poly - 1 do
 			surface.DrawPoly({ poly[1], poly[i], poly[i + 1] })
 		end
@@ -274,7 +277,8 @@ if CLIENT then
 		self.Emitter = ParticleEmitter(self:GetPos(), false)
 		self.NextAmbientParticle = 0
 		self.DidSplashBurst = false
-		self:SetRenderBounds(Vector(-80, -80, -80), Vector(80, 80, 80))
+		self.SplashDrops = {}
+		self:SetRenderBounds(Vector(-95, -95, -95), Vector(95, 95, 95))
 	end
 
 	function ENT:OnRemove()
@@ -284,35 +288,50 @@ if CLIENT then
 	end
 
 	function ENT:SpawnSplashParticles()
-		if not IsValid(self.Emitter) then return end
-		local pos = self:GetPos()
-		local fwd = self:GetForward()
+		local pos   = self:GetPos()
+		local fwd   = self:GetForward()
 		local right = self:GetRight()
-		local up = self:GetUp()
+		local up    = self:GetUp()
+		local ct    = CurTime()
 
-		-- Initial burst of green portal liquid droplets splashing outward & coalescing
-		for i = 1, 22 do
-			local a = (i / 22) * math.pi * 2 + math.Rand(-0.15, 0.15)
+		-- 1) Custom 3D cartoon liquid droplets rendered via render.DrawSprite(matBlob) (100% PNG-safe, zero checkerboard!)
+		self.SplashDrops = {}
+		for i = 1, 20 do
+			local a = (i / 20) * math.pi * 2 + math.Rand(-0.18, 0.18)
 			local radialDir = right * math.cos(a) + up * math.sin(a)
-			local p = self.Emitter:Add("rick_portal/liquid_blob.png", pos + radialDir * math.Rand(2, 10))
-			if p then
-				p:SetVelocity(radialDir * math.Rand(55, 135) + fwd * math.Rand(15, 55))
-				p:SetDieTime(math.Rand(0.45, 0.85))
-				p:SetStartAlpha(250)
-				p:SetEndAlpha(0)
-				p:SetStartSize(math.Rand(8, 16))
-				p:SetEndSize(math.Rand(2, 4))
-				p:SetRoll(math.Rand(0, 360))
-				p:SetRollDelta(math.Rand(-5, 5))
-				p:SetColor(152, 238, 76)
-				p:SetGravity(Vector(0, 0, -180))
-				p:SetAirResistance(90)
+			self.SplashDrops[#self.SplashDrops + 1] = {
+				startPos = pos + radialDir * math.Rand(2, 9),
+				vel      = radialDir * math.Rand(65, 145) + fwd * math.Rand(-25, 45),
+				birth    = ct,
+				dur      = math.Rand(0.45, 0.85),
+				size     = math.Rand(10, 20)
+			}
+		end
+
+		-- 2) Glowing emerald VTF energy sparks via ParticleEmitter (using built-in sprites/light_glow02 VTF!)
+		if IsValid(self.Emitter) then
+			self.Emitter:SetPos(pos)
+			for i = 1, 24 do
+				local a = (i / 24) * math.pi * 2 + math.Rand(-0.15, 0.15)
+				local radialDir = right * math.cos(a) + up * math.sin(a)
+				local p = self.Emitter:Add(matSplashVTF, pos + radialDir * math.Rand(2, 10))
+				if p then
+					p:SetVelocity(radialDir * math.Rand(55, 135) + fwd * math.Rand(-30, 30))
+					p:SetDieTime(math.Rand(0.45, 0.85))
+					p:SetStartAlpha(255)
+					p:SetEndAlpha(0)
+					p:SetStartSize(math.Rand(12, 22))
+					p:SetEndSize(math.Rand(2, 5))
+					p:SetColor(135, 250, 68)
+					p:SetGravity(Vector(0, 0, -150))
+					p:SetAirResistance(90)
+				end
 			end
 		end
 	end
 
 	function ENT:Think()
-		local ct = CurTime()
+		local ct  = CurTime()
 		local pos = self:GetPos()
 
 		if not self.DidSplashBurst then
@@ -320,7 +339,6 @@ if CLIENT then
 			self:SpawnSplashParticles()
 		end
 
-		-- Ambient bubbling green droplets / dimensional sparks around the portal edge
 		if IsValid(self.Emitter) and ct >= self.NextAmbientParticle and not self:GetIsClosing() then
 			self.NextAmbientParticle = ct + 0.065
 			self.Emitter:SetPos(pos)
@@ -331,23 +349,20 @@ if CLIENT then
 			local ry = isFloor and 48 or 55
 			local rimPos = pos + self:GetRight() * (math.cos(a) * rx) + self:GetUp() * (math.sin(a) * ry)
 
-			local p = self.Emitter:Add("rick_portal/liquid_blob.png", rimPos)
+			local p = self.Emitter:Add(matSplashVTF, rimPos)
 			if p then
-				p:SetVelocity(self:GetForward() * math.Rand(6, 22) + VectorRand() * 14)
-				p:SetDieTime(math.Rand(0.45, 0.8))
-				p:SetStartAlpha(225)
+				p:SetVelocity(VectorRand() * 22)
+				p:SetDieTime(math.Rand(0.45, 0.85))
+				p:SetStartAlpha(235)
 				p:SetEndAlpha(0)
-				p:SetStartSize(math.Rand(4.5, 8.5))
-				p:SetEndSize(0.5)
-				p:SetRoll(math.Rand(0, 360))
-				p:SetRollDelta(math.Rand(-4, 4))
-				p:SetColor(168, 245, 88)
-				p:SetGravity(Vector(0, 0, -65))
+				p:SetStartSize(math.Rand(8, 14))
+				p:SetEndSize(1)
+				p:SetColor(150, 252, 78)
+				p:SetGravity(Vector(0, 0, -45))
 				p:SetAirResistance(60)
 			end
 		end
 
-		-- Green dynamic light casting Rick & Morty emerald glow onto nearby walls, floor & player!
 		local dlightConVar = GetConVar("cl_rickportal_dlight")
 		if not dlightConVar or dlightConVar:GetBool() then
 			local age = ct - self:GetBirthTime()
@@ -357,22 +372,21 @@ if CLIENT then
 
 			local dl = DynamicLight(self:EntIndex())
 			if dl then
-				dl.pos = pos + self:GetForward() * 12
+				dl.pos = pos + self:GetForward() * 8
 				dl.r = 95
 				dl.g = 242
 				dl.b = 62
-				dl.brightness = 2.8 * openFrac * closeFrac * pulse
+				dl.brightness = 3.0 * openFrac * closeFrac * pulse
 				dl.Decay = 1000
-				dl.Size = 260 * openFrac * closeFrac
+				dl.Size = 270 * openFrac * closeFrac
 				dl.DieTime = ct + 0.08
 			end
 		end
 	end
 
-	-- Renders one side of the portal in 3D2D space (drawn on both front & back for mid-air 360° visibility!)
 	function ENT:DrawPortalFace(pos, ang, ct)
 		local seed = self.Seed or 0
-		local age = math.max(0, ct - self:GetBirthTime())
+		local age  = math.max(0, ct - self:GetBirthTime())
 		local morphT = math.Clamp(age / MORPH_DURATION, 0, 1)
 
 		local closeMult = 1.0
@@ -382,19 +396,14 @@ if CLIENT then
 		end
 
 		local isFloor = self:GetIsFloorPortal()
-		-- Classic Rick & Morty tall oval on walls/mid-air, round vortex on floor
 		local baseW = isFloor and 560 or 470
 		local baseH = isFloor and 560 or 600
 
-		-- Continuous organic breathing, stretching, shearing & morphing!
 		local breatheX = 1.0 + math.sin(ct * 2.6 + seed) * 0.048 + math.cos(ct * 5.9 + seed * 2) * 0.022
 		local breatheY = 1.0 + math.cos(ct * 2.3 + seed * 1.3) * 0.052 + math.sin(ct * 5.1 + seed) * 0.024
 
-		-- Liquid -> Portal Transformation Envelope:
-		-- Starts as a tight, wildly wobbling green fluid blob (18% size), stretches & ripples outward,
-		-- coalesces its satellite droplets, and blossoms into the swirling Rick & Morty vortex!
 		local growCurve = EaseOutBack(morphT) * closeMult
-		local liquidPhase = math.Clamp(1.0 - (morphT - 0.15) / 0.75, 0, 1) -- 1.0 = pure liquid, 0.0 = full portal
+		local liquidPhase = math.Clamp(1.0 - (morphT - 0.15) / 0.75, 0, 1)
 		if self:GetIsClosing() then
 			liquidPhase = math.Clamp(liquidPhase + (1.0 - closeMult) * 0.85, 0, 1)
 		end
@@ -403,18 +412,13 @@ if CLIENT then
 		local curH = baseH * (0.14 + 0.86 * growCurve) * breatheY
 
 		cam.Start3D2D(pos, ang, 0.2)
-			-- STAGE 1 & LIVING RIM: Organic wobbling green fluid mass!
-			-- During morphT 0..0.85, wobble is dramatic (0.28 -> 0.05) so you clearly see green liquid
-			-- splashing, undulating, and transforming into the portal! Even at 1.0, subtle 0.045 rim wave stays alive.
 			local wobble = 0.045 + liquidPhase * 0.26
 			DrawOrganicLiquidDisk(0, 0, curW * 0.50, curH * 0.50, ct, seed, wobble, Color(156, 218, 76, 250), 40)
 
 			if liquidPhase > 0.02 then
-				-- Inner darker green viscous liquid core + cartoon white foam blobs coalescing into the swirl
 				local liqAlpha = math.floor(255 * liquidPhase)
 				DrawOrganicLiquidDisk(0, 0, curW * 0.36, curH * 0.36, ct * 1.3, seed + 4.2, wobble * 1.25, Color(42, 152, 62, liqAlpha), 32)
 
-				-- Coalescing liquid droplets spiraling inward/outward as the fluid transforms!
 				for i = 1, 8 do
 					local orbAng = (i / 8) * math.pi * 2 + ct * (3.8 - morphT * 1.5) + seed
 					local spread = (0.32 + math.sin(ct * 7 + i) * 0.16) * (0.5 + liquidPhase * 0.85)
@@ -425,17 +429,12 @@ if CLIENT then
 				end
 			end
 
-			-- STAGE 2: Smoothly emerging & continuously swirling multi-layer Rick & Morty green portal!
 			local swirlAlpha = math.Clamp((morphT - 0.12) / 0.62, 0, 1) * 255
 			if swirlAlpha > 1 then
-				-- Smooth variable-speed rotation (slightly accelerates during opening, then hypnotically cruises & oscillates)
-				local spinBase = ct * 46 + math.sin(ct * 1.35 + seed) * 16 + (1.0 - morphT) * 110
+				local spinBase  = ct * 46 + math.sin(ct * 1.35 + seed) * 16 + (1.0 - morphT) * 110
 				local spinInner = -ct * 31 + math.cos(ct * 1.9 + seed) * 22
 				local spinCore  = ct * 78 + math.sin(ct * 2.7) * 18
 
-				-- Layer A: Main authentic Rick & Morty portal texture (from user's attached image!)
-				-- Scaled slightly inside an elliptical transform so even as it rotates 360°, the portal maintains
-				-- its living, breathing organic proportions and wobbling outer edge!
 				DrawTexturedRotatedQuad(
 					matSwirl,
 					0, 0,
@@ -444,8 +443,6 @@ if CLIENT then
 					Color(255, 255, 255, swirlAlpha)
 				)
 
-				-- Layer B: Counter-warped translucent secondary swirl layer — creates genuine fluid morphing
-				-- so internal green bands & foam bubbles constantly shift & deform relative to each other!
 				local pulseInner = 0.78 + math.sin(ct * 3.4 + seed) * 0.08
 				DrawTexturedRotatedQuad(
 					matInnerSwirl,
@@ -456,7 +453,6 @@ if CLIENT then
 					Color(195, 255, 145, swirlAlpha * 0.62)
 				)
 
-				-- Layer C: Deep hypnotic fast-spinning center vortex eye
 				local eyeScale = 0.44 + math.cos(ct * 4.3 + seed) * 0.06
 				DrawTexturedRotatedQuad(
 					matInnerSwirl,
@@ -466,7 +462,6 @@ if CLIENT then
 					Color(150, 245, 105, swirlAlpha * 0.78)
 				)
 
-				-- Subtle dimmed tint if this portal isn't linked to a second portal yet (visual feedback, still bright green!)
 				if not IsValid(self:GetLinkedPortal()) then
 					DrawTexturedRotatedQuad(
 						matInnerSwirl,
@@ -481,34 +476,60 @@ if CLIENT then
 	end
 
 	function ENT:Draw()
-		self:DrawTranslucent()
+		-- Do not draw plate2x2 prop model; translucent pass draws the double-sided 3D portal!
 	end
 
 	function ENT:DrawTranslucent()
-		local ct = CurTime()
+		local ct  = CurTime()
 		local pos = self:GetPos()
 		local fwd = self:GetForward()
 
-		-- Soft emerald atmospheric glow halo behind the portal
 		local age = math.max(0, ct - self:GetBirthTime())
 		local morphT = math.Clamp(age / MORPH_DURATION, 0, 1)
 		local closeMult = self:GetIsClosing() and math.Clamp(1.0 - (ct - self:GetCloseTime()) / CLOSE_DURATION, 0, 1) or 1.0
 
 		render.SetMaterial(matGlow)
-		render.DrawSprite(pos + fwd * 2, 145 * morphT * closeMult, 165 * morphT * closeMult, Color(105, 245, 70, 125))
+		render.DrawSprite(pos, 150 * morphT * closeMult, 170 * morphT * closeMult, Color(105, 245, 70, 130))
 
-		-- Front 3D2D plane (facing +Forward)
-		local frontAng = self:GetAngles()
+		-- Draw cartoon green liquid splash droplets in 3D space!
+		if self.SplashDrops and #self.SplashDrops > 0 then
+			render.SetMaterial(matBlob)
+			for i = #self.SplashDrops, 1, -1 do
+				local d = self.SplashDrops[i]
+				local dt = ct - d.birth
+				if dt >= d.dur then
+					table.remove(self.SplashDrops, i)
+				else
+					local frac = dt / d.dur
+					local curP = d.startPos + d.vel * dt * (1.0 - frac * 0.45) + Vector(0, 0, -90 * dt * dt)
+					local sz = d.size * (1.0 - frac * 0.8)
+					render.DrawSprite(curP, sz, sz, Color(160, 242, 78, 255 * (1.0 - frac)))
+				end
+			end
+		end
+
+		-- ====================================================================
+		-- TRUE DOUBLE-SIDED PORTAL RENDERING (VISIBLE FROM BOTH SIDES ALWAYS!)
+		-- Why cam.Start3D2D failed on the back before: Source Engine culls 2D UI quads
+		-- when camera looks at their back normal unless CULLMODE_NONE is set OR
+		-- the second quad is rotated 180° around its Up/Right axis!
+		-- Here we BOTH construct an explicit 180°-flipped basis AND disable backface culling!
+		-- ====================================================================
+		local baseAng = self:GetAngles()
+
+		-- Side 1 (+Forward)
+		local frontAng = Angle(baseAng.p, baseAng.y, baseAng.r)
 		frontAng:RotateAroundAxis(frontAng:Up(), 90)
 		frontAng:RotateAroundAxis(frontAng:Forward(), 90)
-		self:DrawPortalFace(pos + fwd * 0.6, frontAng, ct)
 
-		-- Back 3D2D plane (for mid-air portals so they look awesome from BOTH sides!)
-		if self:GetIsMidAir() then
-			local backAng = (-fwd):Angle()
-			backAng:RotateAroundAxis(backAng:Up(), 90)
-			backAng:RotateAroundAxis(backAng:Forward(), 90)
-			self:DrawPortalFace(pos - fwd * 0.6, backAng, ct)
-		end
+		-- Side 2 (-Forward, exact opposite normal so walking behind ANY portal shows the full spinning vortex!)
+		local backAng = Angle(baseAng.p, baseAng.y, baseAng.r)
+		backAng:RotateAroundAxis(backAng:Up(), -90)
+		backAng:RotateAroundAxis(backAng:Forward(), 90)
+
+		render.PushCullMode(MATERIAL_CULLMODE_NONE)
+			self:DrawPortalFace(pos + fwd * 0.45, frontAng, ct)
+			self:DrawPortalFace(pos - fwd * 0.45, backAng, ct)
+		render.PopCullMode()
 	end
 end

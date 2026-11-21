@@ -1,18 +1,18 @@
 AddCSLuaFile()
 
 SWEP.PrintName          = "Rick's Portal Gun"
-SWEP.Author             = "Rick Sanchez (C-137)"
-SWEP.Instructions       = "ЛКМ: Открыть Портал A (стена / земля / воздух)\nПКМ: Открыть Портал B (связанный выход)\nR (Перезарядка): Закрыть открытые порталы\nE + R: Сменить код измерения на дисплее"
+SWEP.Author             = "Rick Sanchez"
+SWEP.Instructions       = "ЛКМ: Выстрелить Порталом A (стена / земля / воздух)\nПКМ: Выстрелить Порталом B (связанный выход)\nR (Перезарядка): Закрыть открытые порталы\nВся информация отображается прямо на мини-экране пушки!"
 SWEP.Category           = "Rick and Morty"
 
 SWEP.Spawnable          = true
 SWEP.AdminOnly          = false
 
--- Use c_pistol with UseHands = true so Garry's Mod renders the player's actual playermodel c_hands
--- gripping the handle cleanly in first-person!
+-- Use c_pistol with UseHands = true AND scale only the pistol weapon bones to zero (NOT render.SetBlend(0)!),
+-- so the player's actual c_hands / forearm / fingers are 100% OPAQUE and visibly gripping the handle!
 SWEP.ViewModel          = "models/weapons/c_pistol.mdl"
 SWEP.WorldModel         = "models/weapons/w_pistol.mdl"
-SWEP.ViewModelFOV       = 62
+SWEP.ViewModelFOV       = 68
 SWEP.UseHands           = true
 
 SWEP.Slot               = 0
@@ -33,65 +33,72 @@ SWEP.Secondary.Ammo         = "none"
 SWEP.HoldType           = "pistol"
 
 if CLIENT then
-	SWEP.WepSelectIcon = surface.GetTextureID("vgui/entities/weapon_rick_portalgun")
+	SWEP.WepSelectIcon    = surface.GetTextureID("vgui/entities/weapon_rick_portalgun")
 	SWEP.BounceWeaponIcon = true
 end
 
 function SWEP:SetupDataTables()
 	self:NetworkVar("Entity", 0, "PortalA")
 	self:NetworkVar("Entity", 1, "PortalB")
-	self:NetworkVar("Int",    0, "DimIndex")
 	self:NetworkVar("Float",  0, "LastFireTime")
 end
 
 -- ============================================================================
--- Custom 1st-Person Hand Finger Pose & 3rd-Person Arm/Hand Hold Pose
--- Ensures the player visibly & naturally grips the angled round handle of the Portal Gun!
+-- Custom 1st-Person Hand & Finger Pose:
+-- 1) Hides ONLY the HL2 pistol bones (`ValveBiped.square`, `ValveBiped.clip`, etc.) via zero scale
+--    while keeping `c_hands` 100% visible!
+-- 2) Brings the right forearm, wrist, thumb & fingers clearly into the viewport wrapping around
+--    the teardrop grip, while tucking the left hand naturally out of the way (one-handed Rick grip).
 -- ============================================================================
+local ZeroVec = Vector(0.0001, 0.0001, 0.0001)
 
--- Left arm tucked naturally at the player's side in first-person (one-handed Rick style!),
--- Right hand fingers wrapped smoothly around the rounded ergonomic grip without touching an invisible trigger guard.
-local ViewModelBoneMods = {
-	-- Tuck left arm cleanly out of view so player holds the Portal Gun single-handed like Rick Sanchez!
-	["ValveBiped.Bip01_L_Clavicle"]  = { pos = Vector(-16, -12, -28), angle = Angle(-25, -35, 0) },
-	["ValveBiped.Bip01_L_UpperArm"]  = { pos = Vector(0, 0, -18),     angle = Angle(0, -45, 0) },
+local PistolWeaponBonesToHide = {
+	"ValveBiped.square",
+	"ValveBiped.clip",
+	"ValveBiped.hammer",
+	"ValveBiped.trigger",
+	"ValveBiped.muzzle"
+}
 
-	-- Right wrist & palm ergonomics aligned with our 20-degree swept cylindrical grip
-	["ValveBiped.Bip01_R_Hand"]      = { pos = Vector(0, 0, 0),       angle = Angle(-4, 6, -4) },
-	["ValveBiped.Bip01_R_Finger0"]   = { pos = Vector(0, 0, 0),       angle = Angle(14, 18, 8) },
-	["ValveBiped.Bip01_R_Finger01"]  = { pos = Vector(0, 0, 0),       angle = Angle(0, 22, 0) },
-	["ValveBiped.Bip01_R_Finger02"]  = { pos = Vector(0, 0, 0),       angle = Angle(0, 18, 0) },
+local ViewModelHandPose = {
+	-- Tuck left arm down cleanly so Rick holds the Portal Gun one-handed with full view of right hand!
+	["ValveBiped.Bip01_L_Clavicle"]  = { pos = Vector(-20, -16, -32), angle = Angle(-30, -40, 0) },
+	["ValveBiped.Bip01_L_UpperArm"]  = { pos = Vector(0, 0, -24),     angle = Angle(0, -55, 0) },
 
-	-- Index finger curled comfortably around upper grip neck (since Rick's gun has no trigger guard, thumb operates top dial)
-	["ValveBiped.Bip01_R_Finger1"]   = { pos = Vector(0, 0, 0),       angle = Angle(-4, -32, 0) },
-	["ValveBiped.Bip01_R_Finger11"]  = { pos = Vector(0, 0, 0),       angle = Angle(0, -48, 0) },
-	["ValveBiped.Bip01_R_Finger12"]  = { pos = Vector(0, 0, 0),       angle = Angle(0, -32, 0) },
+	-- Right wrist angled slightly inward & upward so the forearm, knuckles & thumb are clearly seen holding the handle!
+	["ValveBiped.Bip01_R_Forearm"]   = { pos = Vector(0, 0, 0),       angle = Angle(2, -4, 8) },
+	["ValveBiped.Bip01_R_Hand"]      = { pos = Vector(0, 0, 0),       angle = Angle(-10, 8, -12) },
 
-	-- Middle, Ring, Pinky wrapped snugly around the cylindrical handle
-	["ValveBiped.Bip01_R_Finger2"]   = { pos = Vector(0, 0, 0),       angle = Angle(0, -38, 0) },
-	["ValveBiped.Bip01_R_Finger21"]  = { pos = Vector(0, 0, 0),       angle = Angle(0, -55, 0) },
-	["ValveBiped.Bip01_R_Finger22"]  = { pos = Vector(0, 0, 0),       angle = Angle(0, -36, 0) },
+	-- Thumb resting right up near the black rear-top trigger switch!
+	["ValveBiped.Bip01_R_Finger0"]   = { pos = Vector(0, 0, 0),       angle = Angle(18, 24, 12) },
+	["ValveBiped.Bip01_R_Finger01"]  = { pos = Vector(0, 0, 0),       angle = Angle(-4, 18, 0) },
+	["ValveBiped.Bip01_R_Finger02"]  = { pos = Vector(0, 0, 0),       angle = Angle(0, 16, 0) },
 
-	["ValveBiped.Bip01_R_Finger3"]   = { pos = Vector(0, 0, 0),       angle = Angle(3, -42, 0) },
-	["ValveBiped.Bip01_R_Finger31"]  = { pos = Vector(0, 0, 0),       angle = Angle(0, -56, 0) },
-	["ValveBiped.Bip01_R_Finger32"]  = { pos = Vector(0, 0, 0),       angle = Angle(0, -38, 0) },
+	-- 4 fingers wrapped tightly around the rounded teardrop handle
+	["ValveBiped.Bip01_R_Finger1"]   = { pos = Vector(0, 0, 0),       angle = Angle(-4, -36, 0) },
+	["ValveBiped.Bip01_R_Finger11"]  = { pos = Vector(0, 0, 0),       angle = Angle(0, -52, 0) },
+	["ValveBiped.Bip01_R_Finger12"]  = { pos = Vector(0, 0, 0),       angle = Angle(0, -34, 0) },
 
-	["ValveBiped.Bip01_R_Finger4"]   = { pos = Vector(0, 0, 0),       angle = Angle(6, -44, 0) },
-	["ValveBiped.Bip01_R_Finger41"]  = { pos = Vector(0, 0, 0),       angle = Angle(0, -54, 0) },
-	["ValveBiped.Bip01_R_Finger42"]  = { pos = Vector(0, 0, 0),       angle = Angle(0, -36, 0) }
+	["ValveBiped.Bip01_R_Finger2"]   = { pos = Vector(0, 0, 0),       angle = Angle(0, -42, 0) },
+	["ValveBiped.Bip01_R_Finger21"]  = { pos = Vector(0, 0, 0),       angle = Angle(0, -58, 0) },
+	["ValveBiped.Bip01_R_Finger22"]  = { pos = Vector(0, 0, 0),       angle = Angle(0, -38, 0) },
+
+	["ValveBiped.Bip01_R_Finger3"]   = { pos = Vector(0, 0, 0),       angle = Angle(4, -46, 0) },
+	["ValveBiped.Bip01_R_Finger31"]  = { pos = Vector(0, 0, 0),       angle = Angle(0, -58, 0) },
+	["ValveBiped.Bip01_R_Finger32"]  = { pos = Vector(0, 0, 0),       angle = Angle(0, -40, 0) },
+
+	["ValveBiped.Bip01_R_Finger4"]   = { pos = Vector(0, 0, 0),       angle = Angle(7, -48, 0) },
+	["ValveBiped.Bip01_R_Finger41"]  = { pos = Vector(0, 0, 0),       angle = Angle(0, -56, 0) },
+	["ValveBiped.Bip01_R_Finger42"]  = { pos = Vector(0, 0, 0),       angle = Angle(0, -38, 0) }
 }
 
 function SWEP:Initialize()
 	self:SetHoldType("pistol")
-	if self:GetDimIndex() <= 0 then
-		self:SetDimIndex(1)
-	end
 
 	if CLIENT then
 		self.DeployAnimFrac = 0
 		self.FireRecoil     = 0
 		self.DialKick       = 0
-		self.SwayPos        = Vector(0, 0, 0)
 		self.SwayAng        = Angle(0, 0, 0)
 		self.LastEyeAng     = nil
 	end
@@ -124,7 +131,7 @@ function SWEP:OnRemove()
 end
 
 -- ============================================================================
--- Server Portal Linking & Fluid Projectile Firing
+-- Server Portal Linking & Fluid Projectile Firing (No Dimension Switching!)
 -- ============================================================================
 
 if SERVER then
@@ -145,7 +152,6 @@ if SERVER then
 			self:SetPortalB(newPortal)
 		end
 
-		-- Link Portal A <-> Portal B bi-directionally!
 		local pA = self:GetPortalA()
 		local pB = self:GetPortalB()
 		if IsValid(pA) and not pA:GetIsClosing() and IsValid(pB) and not pB:GetIsClosing() then
@@ -168,32 +174,29 @@ if SERVER then
 		local right  = owner:EyeAngles():Right()
 		local up     = owner:EyeAngles():Up()
 
-		-- Spawn green fluid slightly forward & to the right (matching muzzle of the hand-held Portal Gun)
-		local muzzlePos = eyePos + aimDir * 18 + right * 7 - up * 4
-		-- Check if player is standing super close to a wall/ground so muzzle doesn't clip behind wall
+		local muzzlePos = eyePos + aimDir * 20 + right * 8 - up * 4
 		local trNear = util.TraceLine({
-			start = eyePos,
+			start  = eyePos,
 			endpos = muzzlePos,
 			filter = owner,
-			mask = MASK_SOLID
+			mask   = MASK_SOLID
 		})
 		if trNear.Hit then
 			muzzlePos = eyePos + aimDir * 4
 		end
 
-		-- Aim convergence: aim toward exact crosshair target (or max free-air distance if aiming into open sky/air!)
 		local maxDistCvar = GetConVar("sv_rickportal_maxdist")
 		local freeAirDist = maxDistCvar and maxDistCvar:GetFloat() or 420
 
 		local trAim = util.TraceLine({
-			start = eyePos,
+			start  = eyePos,
 			endpos = eyePos + aimDir * freeAirDist,
 			filter = owner,
-			mask = MASK_SOLID
+			mask   = MASK_SOLID
 		})
 
-		local targetPos = trAim.Hit and trAim.HitPos or (eyePos + aimDir * freeAirDist)
-		local launchDir = (targetPos - muzzlePos):GetNormalized()
+		local targetPos  = trAim.Hit and trAim.HitPos or (eyePos + aimDir * freeAirDist)
+		local launchDir  = (targetPos - muzzlePos):GetNormalized()
 		local travelDist = muzzlePos:Distance(targetPos)
 
 		local blob = ents.Create("ent_rick_portal_blob")
@@ -244,20 +247,7 @@ function SWEP:Reload()
 	if (self.NextReloadTime or 0) > CurTime() then return end
 	self.NextReloadTime = CurTime() + 0.55
 
-	local owner = self:GetOwner()
-	if not IsValid(owner) then return end
-
 	if SERVER then
-		-- E + Reload: Cycle Dimension Code on the Red LED Display ("C-137" -> "C-131" -> ...)
-		if owner:KeyDown(IN_USE) then
-			local dims = RICK_PORTAL.Dimensions or { "C-137" }
-			local nextIdx = (self:GetDimIndex() % #dims) + 1
-			self:SetDimIndex(nextIdx)
-			owner:EmitSound("buttons/button15.wav", 65, 115, 0.6)
-			return
-		end
-
-		-- Standard Reload: Smoothly close active portals!
 		local closedAny = false
 		if IsValid(self:GetPortalA()) and not self:GetPortalA():GetIsClosing() then
 			self:GetPortalA():CloseSmoothly()
@@ -268,12 +258,8 @@ function SWEP:Reload()
 			closedAny = true
 		end
 
-		if not closedAny then
-			-- Also allow cycling dimension if no portals are open so R always feels interactive!
-			local dims = RICK_PORTAL.Dimensions or { "C-137" }
-			local nextIdx = (self:GetDimIndex() % #dims) + 1
-			self:SetDimIndex(nextIdx)
-			owner:EmitSound("buttons/button15.wav", 65, 118, 0.55)
+		if closedAny and IsValid(self:GetOwner()) then
+			self:GetOwner():EmitSound("buttons/button15.wav", 65, 95, 0.55)
 		end
 	end
 
@@ -283,22 +269,26 @@ function SWEP:Reload()
 end
 
 -- ============================================================================
--- Client Rendering: Polished First-Person Hold, Idle Breathing, Walk Bob,
--- Recoil, Finger Grip Pose & Third-Person WorldModel Grip!
+-- Client Rendering: Visible Hand Grip + Full-Size Accurate Portal Gun +
+-- Live Mini-Screen Telemetry Right on the Gun!
 -- ============================================================================
 
 if CLIENT then
 	local matGlow = Material("sprites/light_glow02_add")
 
-	function SWEP:GetDimensionString()
-		local dims = (RICK_PORTAL and RICK_PORTAL.Dimensions) or { "C-137" }
-		local idx = math.Clamp(self:GetDimIndex(), 1, #dims)
-		return dims[idx] or "C-137"
-	end
-
 	function SWEP:ApplyViewModelBones(vm)
 		if not IsValid(vm) or not vm:GetBoneCount() or vm:GetBoneCount() <= 0 then return end
-		for boneName, mod in pairs(ViewModelBoneMods) do
+
+		-- 1) Collapse ONLY the HL2 9mm pistol mesh bones to 0.0001 so c_hands stay 100% visible!
+		for _, bName in ipairs(PistolWeaponBonesToHide) do
+			local bId = vm:LookupBone(bName)
+			if bId then
+				vm:ManipulateBoneScale(bId, ZeroVec)
+			end
+		end
+
+		-- 2) Apply ergonomic right-hand finger wrap & tuck left arm cleanly
+		for boneName, mod in pairs(ViewModelHandPose) do
 			local boneId = vm:LookupBone(boneName)
 			if boneId then
 				if mod.pos then vm:ManipulateBonePosition(boneId, mod.pos) end
@@ -306,10 +296,10 @@ if CLIENT then
 			end
 		end
 
-		-- Subtle thumb press animation on top black rotary wheel when firing/switching dimensions!
+		-- Animate thumb pressing the black rear-top switch when firing!
 		local thumbBone = vm:LookupBone("ValveBiped.Bip01_R_Finger01")
 		if thumbBone and (self.DialKick or 0) > 0.01 then
-			vm:ManipulateBoneAngles(thumbBone, Angle(0, 22 + self.DialKick * 18, 0))
+			vm:ManipulateBoneAngles(thumbBone, Angle(-4, 18 + self.DialKick * 22, 0))
 		end
 	end
 
@@ -325,8 +315,56 @@ if CLIENT then
 		end
 	end
 
-	-- Smooth procedural viewmodel camera sway, breathing, walk bob & comfortable lower-right hold angle
-	-- so you clearly see the hand gripping the handle + the red LED screen + the bubbling green dome!
+	-- Computes live aim telemetry to display directly on the Portal Gun's red mini-screen
+	function SWEP:GetLiveScreenState()
+		local owner = self:GetOwner()
+		local hasA  = IsValid(self:GetPortalA()) and not self:GetPortalA():GetIsClosing()
+		local hasB  = IsValid(self:GetPortalB()) and not self:GetPortalB():GetIsClosing()
+		local firePulse = math.Clamp(1.0 - (CurTime() - self:GetLastFireTime()) * 3.2, 0, 1)
+
+		local distM    = 0
+		local surfType = "AIR"
+
+		if IsValid(owner) then
+			local maxDistCvar = GetConVar("sv_rickportal_maxdist")
+			local freeAirDist = maxDistCvar and maxDistCvar:GetFloat() or 420
+			local eyePos = owner:EyePos()
+			local tr = util.TraceLine({
+				start  = eyePos,
+				endpos = eyePos + owner:GetAimVector() * freeAirDist,
+				filter = owner,
+				mask   = MASK_SOLID
+			})
+			local dUnits = tr.Hit and eyePos:Distance(tr.HitPos) or freeAirDist
+			distM = dUnits * 0.01905 -- Source units -> meters
+
+			if tr.Hit then
+				if tr.HitNormal.z > 0.65 then
+					surfType = "FLOOR"
+				elseif tr.HitNormal.z < -0.65 then
+					surfType = "CEIL"
+				else
+					surfType = "WALL"
+				end
+			else
+				surfType = "MID-AIR"
+			end
+		end
+
+		return {
+			firePulse   = firePulse,
+			dialKick    = self.DialKick or 0,
+			hasA        = hasA,
+			hasB        = hasB,
+			targetDistM = distM,
+			surfType    = surfType
+		}
+	end
+
+	-- Viewmodel framing: pulled slightly UP and CLOSER so:
+	-- 1) The player's right forearm, wrist, thumb & curled fingers holding the teardrop grip are 100% in view!
+	-- 2) The Portal Gun itself looks substantial, chunky & iconic (not tiny!).
+	-- 3) The top red LED mini-screen is tilted comfortably toward your eyes so every stat is readable!
 	function SWEP:CalcViewModelView(vm, oldPos, oldAng, pos, ang)
 		local owner = self:GetOwner()
 		if not IsValid(owner) then return pos, ang end
@@ -334,12 +372,10 @@ if CLIENT then
 		local ft = FrameTime()
 		local ct = CurTime()
 
-		-- Decay recoil & deploy spring
 		self.DeployAnimFrac = math.Approach(self.DeployAnimFrac or 0, 1, ft * 3.4)
 		self.FireRecoil     = Lerp(math.Clamp(ft * 11, 0, 1), self.FireRecoil or 0, 0)
 		self.DialKick       = Lerp(math.Clamp(ft * 9, 0, 1), self.DialKick or 0, 0)
 
-		-- Smooth mouse look lag / inertia sway
 		local eyeAng = owner:EyeAngles()
 		if not self.LastEyeAng then self.LastEyeAng = eyeAng end
 		local dYaw   = math.AngleDifference(eyeAng.y, self.LastEyeAng.y)
@@ -347,62 +383,54 @@ if CLIENT then
 		self.LastEyeAng = eyeAng
 
 		self.SwayAng = self.SwayAng or Angle(0, 0, 0)
-		self.SwayAng.y = Lerp(math.Clamp(ft * 10, 0, 1), self.SwayAng.y, math.Clamp(-dYaw * 0.45, -7, 7))
-		self.SwayAng.p = Lerp(math.Clamp(ft * 10, 0, 1), self.SwayAng.p, math.Clamp(dPitch * 0.40, -6, 6))
-		self.SwayAng.r = Lerp(math.Clamp(ft * 10, 0, 1), self.SwayAng.r, math.Clamp(dYaw * 0.35, -6, 6))
+		self.SwayAng.y = Lerp(math.Clamp(ft * 10, 0, 1), self.SwayAng.y, math.Clamp(-dYaw * 0.42, -6, 6))
+		self.SwayAng.p = Lerp(math.Clamp(ft * 10, 0, 1), self.SwayAng.p, math.Clamp(dPitch * 0.38, -5, 5))
+		self.SwayAng.r = Lerp(math.Clamp(ft * 10, 0, 1), self.SwayAng.r, math.Clamp(dYaw * 0.32, -5, 5))
 
-		-- Walk / sprint bobbing + idle Rick breathing
-		local vel2D = owner:GetVelocity():Length2D()
-		local onGround = owner:IsOnGround()
-		local moveFrac = onGround and math.Clamp(vel2D / 220, 0, 1.35) or 0.15
+		local vel2D    = owner:GetVelocity():Length2D()
+		local moveFrac = owner:IsOnGround() and math.Clamp(vel2D / 220, 0, 1.3) or 0.15
 
-		local idlePitch = math.sin(ct * 1.9) * 0.65
-		local idleRoll  = math.cos(ct * 1.4) * 0.55
-		local bobX      = math.sin(ct * 8.5) * 0.55 * moveFrac
-		local bobZ      = math.abs(math.cos(ct * 8.5)) * -0.55 * moveFrac
-		local bobRoll   = math.sin(ct * 8.5) * 1.6 * moveFrac
+		local idlePitch = math.sin(ct * 1.9) * 0.55
+		local idleRoll  = math.cos(ct * 1.4) * 0.45
+		local bobX      = math.sin(ct * 8.5) * 0.50 * moveFrac
+		local bobZ      = math.abs(math.cos(ct * 8.5)) * -0.50 * moveFrac
+		local bobRoll   = math.sin(ct * 8.5) * 1.4 * moveFrac
 
-		-- Deploy smooth raise-into-hand curve
-		local dep = 1.0 - math.pow(1.0 - (self.DeployAnimFrac or 1), 3)
-		local deployDrop = (1.0 - dep) * -9.0
-		local deployTilt = (1.0 - dep) * 24.0
+		local dep        = 1.0 - math.pow(1.0 - (self.DeployAnimFrac or 1), 3)
+		local deployDrop = (1.0 - dep) * -8.5
+		local deployTilt = (1.0 - dep) * 22.0
 
-		-- Recoil kick when shooting green fluid
-		local recBack  = (self.FireRecoil or 0) * -2.2
-		local recPitch = (self.FireRecoil or 0) * -5.5
+		local recBack  = (self.FireRecoil or 0) * -2.4
+		local recPitch = (self.FireRecoil or 0) * -6.0
 
 		local fwd   = ang:Forward()
 		local right = ang:Right()
 		local up    = ang:Up()
 
-		-- Position tuned so the player's right hand & wrist, the angled grip, the red "C-137" display,
-		-- the glass plasma chamber, and the 3 front bulbs are all clearly framed & comfortable!
+		-- Raised & brought slightly inward so the hand holding the handle + big gun + mini-screen fill a great 1st-person silhouette!
 		pos = pos
-			+ fwd   * (2.2 + recBack)
-			+ right * (1.8 + bobX)
-			+ up    * (-1.35 + bobZ + deployDrop)
+			+ fwd   * (-2.2 + recBack)
+			+ right * (-1.4 + bobX)
+			+ up    * (2.15 + bobZ + deployDrop)
 
-		ang:RotateAroundAxis(ang:Right(),   -(idlePitch + recPitch + deployTilt + self.SwayAng.p))
-		ang:RotateAroundAxis(ang:Up(),      self.SwayAng.y - 3.5)
-		ang:RotateAroundAxis(ang:Forward(), idleRoll + bobRoll + self.SwayAng.r + 3.0)
+		ang:RotateAroundAxis(ang:Right(),   -(idlePitch + recPitch + deployTilt + self.SwayAng.p - 6.5))
+		ang:RotateAroundAxis(ang:Up(),      self.SwayAng.y + 7.5)
+		ang:RotateAroundAxis(ang:Forward(), idleRoll + bobRoll + self.SwayAng.r - 6.0)
 
 		return pos, ang
 	end
 
-	-- Hide the underlying HL2 pistol mesh while keeping c_hands 100% visible!
+	-- Apply bone pose BEFORE viewmodel draws — DO NOT call render.SetBlend(0), so c_hands render at 100% opacity!
 	function SWEP:PreDrawViewModel(vm, wep, ply)
 		self:ApplyViewModelBones(vm)
-		render.SetBlend(0)
 	end
 
-	-- Restore blend so Garry's Mod draws c_hands cleanly, then render our custom 3D Rick Portal Gun
-	-- anchored directly to the right hand bone (`ValveBiped.Bip01_R_Hand`)!
+	-- Draw our large, chunky, reference-accurate Portal Gun seated directly inside the visible right hand!
 	function SWEP:PostDrawViewModel(vm, wep, ply)
-		render.SetBlend(1)
-
 		if not IsValid(vm) then return end
 		if not RICK_PORTAL or not RICK_PORTAL.GunRenderer then return end
 
+		vm:SetupBones()
 		local handBone = vm:LookupBone("ValveBiped.Bip01_R_Hand")
 		local origin, ang
 
@@ -419,33 +447,29 @@ if CLIENT then
 			ang    = vm:GetAngles()
 		end
 
-		-- Transform from ValveBiped.Bip01_R_Hand bone space into our Portal Gun grip space:
-		-- In ValveBiped_R_Hand: Forward points from wrist toward knuckles, Right points out of palm, Up points along thumb.
-		-- Placing grip origin at (3.25, -1.45, -0.35) seats the cylindrical handle right inside the curled fingers & palm!
+		-- Seat the teardrop handle right inside the curled fingers of ValveBiped.Bip01_R_Hand,
+		-- at a substantial 1.18 scale (almost 2x larger than before!) so it matches the show!
 		local gunPos, gunAng = LocalToWorld(
-			Vector(3.35, -1.52, -0.45),
-			Angle(-8, 2, 180),
+			Vector(3.55, -1.65, -1.25),
+			Angle(-12, 4, 180),
 			origin,
 			ang
 		)
 
-		local firePulse = math.Clamp(1.0 - (CurTime() - self:GetLastFireTime()) * 3.2, 0, 1)
+		local state = self:GetLiveScreenState()
+		local scale = 1.18
 
-		RICK_PORTAL.GunRenderer:DrawGun(gunPos, gunAng, 0.68, {
-			firePulse = firePulse,
-			dimCode   = self:GetDimensionString()
-		})
+		RICK_PORTAL.GunRenderer:DrawGun(gunPos, gunAng, scale, state)
 
-		-- Muzzle flash burst when firing green fluid
-		if firePulse > 0.05 then
-			local muzWorld = LocalToWorld(Vector(8.2 * 0.68, 0, 2.05 * 0.68), Angle(0, 0, 0), gunPos, gunAng)
+		if state.firePulse > 0.05 then
+			local muzWorld = LocalToWorld(Vector(8.9 * scale, 0, 2.25 * scale), Angle(0, 0, 0), gunPos, gunAng)
 			render.SetMaterial(matGlow)
-			render.DrawSprite(muzWorld, 18 * firePulse, 18 * firePulse, Color(125, 255, 80, 220 * firePulse))
+			render.DrawSprite(muzWorld, 26 * state.firePulse, 26 * state.firePulse, Color(125, 255, 80, 225 * state.firePulse))
 		end
 	end
 
 	-- ========================================================================
-	-- Third-Person & Dropped WorldModel Rendering + Natural Player Grip Pose!
+	-- Third-Person & Dropped WorldModel (Substantial Scale 1.15!)
 	-- ========================================================================
 	function SWEP:DrawWorldModel()
 		if not RICK_PORTAL or not RICK_PORTAL.GunRenderer then
@@ -454,10 +478,10 @@ if CLIENT then
 		end
 
 		local owner = self:GetOwner()
-		local firePulse = math.Clamp(1.0 - (CurTime() - self:GetLastFireTime()) * 3.2, 0, 1)
+		local state = self:GetLiveScreenState()
+		local scale = 1.15
 
 		if IsValid(owner) then
-			-- Ensure 3rd-person player holds it cleanly in one hand (pistol/revolver stance)
 			local handBone = owner:LookupBone("ValveBiped.Bip01_R_Hand")
 			if handBone then
 				owner:SetupBones()
@@ -467,30 +491,26 @@ if CLIENT then
 					local hAng = mtx:GetAngles()
 
 					local gunPos, gunAng = LocalToWorld(
-						Vector(3.4, -1.5, -0.4),
-						Angle(-8, 0, 180),
+						Vector(3.6, -1.6, -1.1),
+						Angle(-10, 0, 180),
 						hPos,
 						hAng
 					)
 
-					RICK_PORTAL.GunRenderer:DrawGun(gunPos, gunAng, 0.72, {
-						firePulse = firePulse,
-						dimCode   = self:GetDimensionString()
-					})
+					RICK_PORTAL.GunRenderer:DrawGun(gunPos, gunAng, scale, state)
 
-					-- Subtle green illumination on the player in dark rooms
 					local dlightConVar = GetConVar("cl_rickportal_dlight")
 					if not dlightConVar or dlightConVar:GetBool() then
 						local dl = DynamicLight(self:EntIndex())
 						if dl then
-							dl.pos = gunPos + gunAng:Up() * 3
-							dl.r = 90
-							dl.g = 235
-							dl.b = 65
-							dl.brightness = 1.1 + firePulse * 1.4
-							dl.Decay = 800
-							dl.Size = 95
-							dl.DieTime = CurTime() + 0.08
+							dl.pos        = gunPos + gunAng:Up() * 4
+							dl.r          = 90
+							dl.g          = 235
+							dl.b          = 65
+							dl.brightness = 1.3 + state.firePulse * 1.5
+							dl.Decay      = 800
+							dl.Size       = 110
+							dl.DieTime    = CurTime() + 0.08
 						end
 					end
 					return
@@ -498,44 +518,21 @@ if CLIENT then
 			end
 		end
 
-		-- Dropped on the ground as an item
-		RICK_PORTAL.GunRenderer:DrawGun(self:GetPos(), self:GetAngles(), 0.78, {
-			firePulse = 0,
-			dimCode   = self:GetDimensionString()
-		})
+		RICK_PORTAL.GunRenderer:DrawGun(self:GetPos(), self:GetAngles(), 1.20, state)
 	end
 
 	function SWEP:DrawWorldModelTranslucent()
 		self:DrawWorldModel()
 	end
 
-	-- Subtle Green-and-White Rick & Morty Crosshair + Portal Status Arcs
+	-- Minimal clean center dot crosshair only — ALL weapon info lives on the Portal Gun's own mini-screen!
 	function SWEP:DoDrawCrosshair(x, y)
-		local hasA = IsValid(self:GetPortalA()) and not self:GetPortalA():GetIsClosing()
-		local hasB = IsValid(self:GetPortalB()) and not self:GetPortalB():GetIsClosing()
-
-		surface.SetDrawColor(145, 250, 82, 230)
+		surface.SetDrawColor(145, 250, 82, 220)
 		surface.DrawRect(x - 2, y - 2, 4, 4)
-
-		local colActive   = Color(138, 245, 76, 240)
-		local colInactive = Color(110, 145, 110, 95)
-
-		draw.SimpleText("(", "Trebuchet24", x - 16, y - 1, hasA and colActive or colInactive, TEXT_ALIGN_CENTER, TEXT_ALIGN_CENTER)
-		draw.SimpleText(")", "Trebuchet24", x + 16, y - 1, hasB and colActive or colInactive, TEXT_ALIGN_CENTER, TEXT_ALIGN_CENTER)
 		return true
 	end
 
-	-- Minimalist, clean Rick & Morty HUD indicator showing Portal A / Portal B status & current Dimension
 	function SWEP:DrawHUD()
-		local hasA = IsValid(self:GetPortalA()) and not self:GetPortalA():GetIsClosing()
-		local hasB = IsValid(self:GetPortalB()) and not self:GetPortalB():GetIsClosing()
-		local colActive = Color(138, 245, 76, 235)
-
-		-- Compact bottom-right dimension badge
-		local bx, by = ScrW() - 175, ScrH() - 68
-		draw.RoundedBox(8, bx, by, 148, 44, Color(16, 24, 18, 195))
-		draw.SimpleText("DIM: " .. self:GetDimensionString(), "DermaDefaultBold", bx + 74, by + 15, Color(255, 82, 72, 245), TEXT_ALIGN_CENTER, TEXT_ALIGN_CENTER)
-		local statusTxt = (hasA and hasB) and "PORTALS LINKED" or ((hasA or hasB) and "1 PORTAL OPEN" or "READY")
-		draw.SimpleText(statusTxt, "DermaDefault", bx + 74, by + 32, (hasA and hasB) and colActive or Color(175, 215, 165, 200), TEXT_ALIGN_CENTER, TEXT_ALIGN_CENTER)
+		-- Intentionally empty: all Portal Gun telemetry is displayed diegetically on the gun's mini-screen!
 	end
 end

@@ -25,9 +25,9 @@ if SERVER then
 		self:SetCollisionBounds(Vector(-4, -4, -4), Vector(4, 4, 4))
 		self:SetCollisionGroup(COLLISION_GROUP_PROJECTILE)
 
-		self.SpawnTime = CurTime()
-		self.LastPos   = self:GetPos()
-		self.Speed     = 1150 -- Smooth visible green fluid flight speed
+		self.SpawnTime   = CurTime()
+		self.LastPos     = self:GetPos()
+		self.Speed       = 1150
 		self.Transformed = false
 
 		local dir = self:GetLaunchDir()
@@ -37,8 +37,7 @@ if SERVER then
 		dir:Normalize()
 		self:SetVelocity(dir * self.Speed)
 
-		-- Subtle green trail behind flying portal fluid
-		util.SpriteTrail(self, 0, Color(138, 238, 72, 220), false, 14, 2, 0.28, 1 / 16, "trails/plasma")
+		util.SpriteTrail(self, 0, Color(138, 238, 72, 220), false, 16, 2, 0.28, 1 / 16, "trails/plasma")
 	end
 
 	function ENT:TransformIntoPortal(pos, surfaceNormal, isMidAir)
@@ -46,17 +45,12 @@ if SERVER then
 		self.Transformed = true
 
 		local owner = self:GetOwner()
-		local wep = self.WeaponRef
-		local slot = self:GetPortalSlot()
+		local wep   = self.WeaponRef
+		local slot  = self:GetPortalSlot()
 		if slot ~= 1 and slot ~= 2 then slot = 1 end
 
 		local portal = ents.Create("ent_rick_portal")
 		if IsValid(portal) then
-			-- Calculate portal orientation:
-			-- 1) Mid-air transformation: vertical portal facing back toward the shooter so they can walk straight in!
-			-- 2) Floor / Ground hit (normal.z > 0.65): can either lie flat on the ground OR stand upright;
-			--    laying flush on ground/slopes (offset slightly above floor) lets you jump/drop right into the ground puddle!
-			-- 3) Ceiling / Wall hit: aligns cleanly flush with the surface normal.
 			local portalAng
 			local spawnPos = pos
 
@@ -69,8 +63,6 @@ if SERVER then
 				toShooter:Normalize()
 				portalAng = toShooter:Angle()
 
-				-- If hovering slightly too close to ground so a vertical 52u radius portal would clip deep into floor,
-				-- gently lift its center so the bottom rim kisses the floor cleanly!
 				local trFloor = util.TraceLine({
 					start = spawnPos,
 					endpos = spawnPos - Vector(0, 0, 56),
@@ -85,10 +77,8 @@ if SERVER then
 			else
 				local n = surfaceNormal:GetNormalized()
 				portalAng = n:Angle()
-				-- Offset 2.5 units off the wall/ground so there is zero Z-fighting
 				spawnPos = pos + n * 2.5
 
-				-- If placed on a vertical wall near a floor, raise slightly so bottom doesn't sink under floor
 				if math.abs(n.z) < 0.35 then
 					local trDown = util.TraceLine({
 						start = spawnPos,
@@ -120,35 +110,30 @@ if SERVER then
 	function ENT:Think()
 		if self.Transformed then return end
 
-		local curPos = self:GetPos()
+		local curPos   = self:GetPos()
 		local startPos = self:GetStartPos()
-		local maxDist = self:GetMaxTravelDist()
+		local maxDist  = self:GetMaxTravelDist()
 		if maxDist <= 0 then maxDist = 420 end
 
-		-- Sweep trace from LastPos to curPos + step to catch thin walls, props, or ground cleanly
 		local vel = self:GetVelocity()
 		local stepEnd = curPos + vel * FrameTime()
 		local tr = util.TraceHull({
-			start = self.LastPos or curPos,
+			start  = self.LastPos or curPos,
 			endpos = stepEnd,
-			mins = Vector(-3, -3, -3),
-			maxs = Vector(3, 3, 3),
+			mins   = Vector(-3, -3, -3),
+			maxs   = Vector(3, 3, 3),
 			filter = { self, self:GetOwner() },
-			mask = MASK_SOLID
+			mask   = MASK_SOLID
 		})
 
 		if tr.Hit then
-			-- Hit wall, floor/ground, ceiling, or prop -> liquid splashes onto it and morphs into a portal!
 			self:TransformIntoPortal(tr.HitPos, tr.HitNormal, false)
 			return
 		end
 
-		-- Check if the blob has flown the free-air distance without hitting anything ->
-		-- Smoothly decelerate & transform right in mid-air into a hovering portal!
 		local traveled = curPos:Distance(startPos)
 		local frac = traveled / maxDist
 		if frac > 0.68 then
-			-- Smoothly slow down the green fluid blob right before it blossoms into the portal
 			local slowFactor = math.Clamp(1.0 - ((frac - 0.68) / 0.32) * 0.78, 0.18, 1.0)
 			self:SetVelocity(self:GetLaunchDir():GetNormalized() * (self.Speed * slowFactor))
 		end
@@ -169,7 +154,7 @@ if SERVER then
 		if IsValid(ent) and ent:GetClass() == "ent_rick_portal" then return end
 
 		local tr = util.TraceLine({
-			start = self.LastPos or self:GetPos(),
+			start  = self.LastPos or self:GetPos(),
 			endpos = self:GetPos() + self:GetLaunchDir() * 24,
 			filter = { self, self:GetOwner() }
 		})
@@ -178,12 +163,20 @@ if SERVER then
 end
 
 if CLIENT then
-	local matBlob  = Material("rick_portal/liquid_blob.png", "smooth mips")
-	local matGlow  = Material("sprites/light_glow02_add")
+	local matBlob = Material("rick_portal/liquid_blob.png", "smooth mips")
+	local matGlow = Material("sprites/light_glow02_add")
+
+	-- Built-in VTF particle material (guaranteed 100% purple-checkerboard-free in CLuaEmitter!)
+	local matParticleDrop = CreateMaterial("RickPortal_FluidDropVTF_v2", "UnlitGeneric", {
+		["$basetexture"] = "sprites/light_glow02",
+		["$additive"]    = "1",
+		["$vertexcolor"] = "1",
+		["$vertexalpha"] = "1"
+	})
 
 	function ENT:Initialize()
-		self.Seed = math.Rand(0, 100)
-		self.Emitter = ParticleEmitter(self:GetPos(), false)
+		self.Seed     = math.Rand(0, 100)
+		self.Emitter  = ParticleEmitter(self:GetPos(), false)
 		self.NextDrip = 0
 	end
 
@@ -196,22 +189,21 @@ if CLIENT then
 	function ENT:Think()
 		local pos = self:GetPos()
 
-		-- Emit dripping green portal fluid droplets as it flies through the air
 		if IsValid(self.Emitter) and CurTime() >= self.NextDrip then
 			self.NextDrip = CurTime() + 0.022
 			self.Emitter:SetPos(pos)
 
-			local p = self.Emitter:Add("rick_portal/liquid_blob.png", pos + VectorRand() * 3.5)
+			local p = self.Emitter:Add(matParticleDrop, pos + VectorRand() * 3.5)
 			if p then
 				p:SetVelocity(VectorRand() * 28 - self:GetVelocity() * 0.08 + Vector(0, 0, -25))
 				p:SetDieTime(math.Rand(0.28, 0.48))
-				p:SetStartAlpha(245)
+				p:SetStartAlpha(255)
 				p:SetEndAlpha(0)
-				p:SetStartSize(math.Rand(6, 11))
-				p:SetEndSize(math.Rand(1.5, 3))
+				p:SetStartSize(math.Rand(9, 15))
+				p:SetEndSize(math.Rand(2, 4))
 				p:SetRoll(math.Rand(0, 360))
 				p:SetRollDelta(math.Rand(-6, 6))
-				p:SetColor(145, 238, 72)
+				p:SetColor(135, 248, 68)
 				p:SetGravity(Vector(0, 0, -260))
 				p:SetAirResistance(45)
 			end
@@ -221,35 +213,34 @@ if CLIENT then
 		if not dlightConVar or dlightConVar:GetBool() then
 			local dl = DynamicLight(self:EntIndex())
 			if dl then
-				dl.pos = pos
-				dl.r = 95
-				dl.g = 245
-				dl.b = 65
-				dl.brightness = 2.2
-				dl.Decay = 900
-				dl.Size = 150
-				dl.DieTime = CurTime() + 0.08
+				dl.pos        = pos
+				dl.r          = 95
+				dl.g          = 245
+				dl.b          = 65
+				dl.brightness = 2.4
+				dl.Decay      = 900
+				dl.Size       = 160
+				dl.DieTime    = CurTime() + 0.08
 			end
 		end
 	end
 
 	function ENT:Draw()
 		local pos = self:GetPos()
-		local ct = CurTime() + (self.Seed or 0)
+		local ct  = CurTime() + (self.Seed or 0)
 
-		-- Multi-blob wobbling organic green liquid mass in flight!
 		render.SetMaterial(matGlow)
-		render.DrawSprite(pos, 38, 38, Color(110, 255, 75, 185))
+		render.DrawSprite(pos, 42, 42, Color(110, 255, 75, 195))
 
 		render.SetMaterial(matBlob)
 		for i = 1, 5 do
 			local phase = ct * (8 + i * 1.7) + i * 2.1
 			local offset = Vector(
-				math.sin(phase) * 3.2,
-				math.cos(phase * 1.15) * 3.2,
-				math.sin(phase * 0.85 + 1.0) * 3.2
+				math.sin(phase) * 3.4,
+				math.cos(phase * 1.15) * 3.4,
+				math.sin(phase * 0.85 + 1.0) * 3.4
 			)
-			local sz = 16 + math.sin(ct * 12 + i) * 4.5
+			local sz = 18 + math.sin(ct * 12 + i) * 5.0
 			render.DrawSprite(pos + offset, sz, sz * (0.85 + 0.25 * math.cos(phase)), Color(165, 245, 85, 250))
 		end
 	end
