@@ -1,0 +1,10 @@
+{
+	"title": "Rick and Morty Portal Gun",
+	"type": "weapon",
+	"tags": [ "fun", "cartoon", "scifi" ],
+	"ignore": [
+		".git/*",
+		"*.md",
+		".gitignore"
+	]
+}
