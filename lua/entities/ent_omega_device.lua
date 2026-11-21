@@ -2,7 +2,7 @@ AddCSLuaFile()
 
 ENT.Type        = "anim"
 ENT.Base        = "base_anim"
-ENT.PrintName   = "Omega Device (Chamber)"
+ENT.PrintName   = "Omega Device (Станция с монитором)"
 ENT.Author      = "Rick Prime"
 ENT.Category    = "Rick and Morty"
 ENT.Spawnable   = true
@@ -48,9 +48,11 @@ if SERVER then
 		local subj = self:GetCapturedSubject()
 		if IsValid(subj) then
 			subj:SetMoveType(self.SavedSubjMoveType or MOVETYPE_STEP)
-			local releasePos = self:LocalToWorld(Vector(105, 0, 16))
+			local releasePos = self:LocalToWorld(Vector(108, 0, 16))
 			subj:SetPos(releasePos)
-			if subj:IsNPC() then
+			if subj:IsPlayer() then
+				subj:Freeze(false)
+			elseif subj:IsNPC() then
 				subj:CapabilitiesAdd(CAP_MOVE_GROUND)
 			end
 			local phys = subj:GetPhysicsObject()
@@ -62,7 +64,6 @@ if SERVER then
 	function ENT:CaptureSingleRepresentative(sigTarget, caller)
 		if self:GetIsCharging() then return end
 
-		-- Release any currently imprisoned creature first
 		if IsValid(self:GetCapturedSubject()) then
 			self:ReleaseSubject()
 		end
@@ -78,16 +79,21 @@ if SERVER then
 			end
 		end
 
-		if not IsValid(found) then return end
+		if not IsValid(found) then
+			if IsValid(caller) then
+				caller:EmitSound("buttons/button10.wav", 68, 95, 0.7)
+			end
+			return
+		end
 
 		self.SavedSubjMoveType = found:GetMoveType()
-		local capsuleCenter = self:LocalToWorld(Vector(-10, 0, 14))
+		local capsuleCenter = self:LocalToWorld(Vector(-10, 0, 16))
 		found:SetPos(capsuleCenter)
 		found:SetAngles(self:GetAngles())
 
 		if found:IsPlayer() then
 			found:Freeze(true)
-			timer.Simple(4.0, function()
+			timer.Simple(5.0, function()
 				if IsValid(found) then found:Freeze(false) end
 			end)
 		else
@@ -107,7 +113,7 @@ if SERVER then
 
 		if subj:GetClass() == "npc_time_police" then
 			if IsValid(caller) then
-				caller:ChatPrint("[OMEGA DEVICE] ОШИБКА: Полиция Времени 4-го измерения защищена от Омега-оружия!")
+				caller:ChatPrint("[OMEGA DEVICE] ОШИБКА: Полиция Времени защищена от стирания Омега-оружием!")
 			end
 			return
 		end
@@ -128,9 +134,9 @@ if SERVER then
 		local ct   = CurTime()
 		local subj = self:GetCapturedSubject()
 
-		-- Keep captured specimen floating & pinned right inside the glass stasis capsule!
+		-- Keep imprisoned specimen floating right inside the cyan stasis capsule!
 		if IsValid(subj) then
-			local hoverZ = 16 + math.sin(ct * 3.2) * 3.5
+			local hoverZ  = 18 + math.sin(ct * 3.2) * 3.5
 			local lockPos = self:LocalToWorld(Vector(-10, 0, hoverZ))
 			subj:SetPos(lockPos)
 			subj:SetLocalVelocity(Vector(0, 0, 0))
@@ -148,7 +154,7 @@ if SERVER then
 					local count, subName = RICK_PORTAL.EraseSubspeciesAcrossMultiverse(subj, self.ExecCaller or self:GetOwner())
 					self:SetCapturedSubject(NULL)
 					if subName then
-						PrintMessage(HUD_PRINTTALK, string.format("[OMEGA DEVICE] Заточённый образец уничтожен — подвид «%s» СТЁРТ ИЗ ВСЕХ ВСЕЛЕННЫХ! (Удалено: %d)", subName, count))
+						PrintMessage(HUD_PRINTTALK, string.format("[OMEGA DEVICE] Заточённый образец расщеплён — подвид «%s» СТЁРТ ИЗ ВСЕХ ВСЕЛЕННЫХ! (Удалено: %d)", subName, count))
 					end
 				end
 			end
@@ -161,13 +167,13 @@ if SERVER then
 	end
 
 	net.Receive("RickOmega_ConsoleCmd", function(_, ply)
-		if not IsValid(ply) then return end
+		if not IsValid(ply) or not ply:Alive() then return end
 		local mach = net.ReadEntity()
 		local cmd  = net.ReadString()
 		local arg  = net.ReadString()
 
 		if not IsValid(mach) or mach:GetClass() ~= "ent_omega_device" then return end
-		if ply:GetShootPos():Distance(mach:GetPos()) > 260 then return end
+		if ply:GetShootPos():Distance(mach:GetPos()) > 340 then return end
 
 		if cmd == "capture" then
 			mach:CaptureSingleRepresentative(arg, ply)
@@ -179,41 +185,41 @@ if SERVER then
 		elseif cmd == "reset" then
 			RICK_PORTAL.ResetErasedMultiverse()
 			mach:EmitSound("buttons/button19.wav", 75, 110, 0.8)
+			PrintMessage(HUD_PRINTTALK, "[OMEGA DEVICE] Все стёртые подвиды возвращены в реальность!")
 		end
 	end)
 end
 
 if CLIENT then
 	function ENT:Initialize()
-		self:SetRenderBounds(Vector(-140, -140, -10), Vector(140, 140, 260))
-		self.ScrollOffset = 0
+		self:SetRenderBounds(Vector(-145, -145, -10), Vector(145, 145, 265))
+		self.ScrollOffset  = 0
 		self.LastClickTime = 0
+		self.WasKeyDown    = false
 	end
 
-	-- Ray-Plane intersection so the player looks directly at the physical 3D monitor and clicks E or LMB!
+	-- Exact bidirectional Ray-Plane intersection on the physical 3D monitor screen!
 	function ENT:GetMonitorCursor(scrOrigin, scrAng, scale)
 		local ply = LocalPlayer()
 		if not IsValid(ply) then return nil, nil, false end
 
 		local eyePos = ply:EyePos()
 		local aimVec = ply:GetAimVector()
-		if eyePos:Distance(scrOrigin) > 165 then return nil, nil, false end
+		if eyePos:Distance(scrOrigin) > 260 then return nil, nil, false end
 
-		-- In cam.Start3D2D(pos, ang, scale):
-		-- +X on canvas = ang:Forward(), +Y on canvas = ang:Right(), Plane normal facing viewer = ang:Up()
 		local planeNormal = scrAng:Up()
 		local denom = aimVec:Dot(planeNormal)
-		if denom >= -0.05 then return nil, nil, false end -- Looking from behind or parallel
+		if math.abs(denom) < 0.04 then return nil, nil, false end
 
 		local t = (scrOrigin - eyePos):Dot(planeNormal) / denom
-		if t < 0 or t > 175 then return nil, nil, false end
+		if t < 0 or t > 270 then return nil, nil, false end
 
 		local hitWorld = eyePos + aimVec * t
 		local delta    = hitWorld - scrOrigin
 		local uiX      = delta:Dot(scrAng:Forward()) / scale
 		local uiY      = delta:Dot(scrAng:Right()) / scale
 
-		if math.abs(uiX) <= 220 and math.abs(uiY) <= 150 then
+		if math.abs(uiX) <= 222 and math.abs(uiY) <= 152 then
 			return uiX, uiY, true
 		end
 		return nil, nil, false
@@ -262,7 +268,7 @@ if CLIENT then
 	end
 
 	function ENT:Draw()
-		-- Drawn cleanly in DrawTranslucent
+		-- Rendered in DrawTranslucent
 	end
 
 	function ENT:DrawTranslucent()
@@ -275,49 +281,49 @@ if CLIENT then
 		local charge = self:GetIsCharging() and math.Clamp((ct - self:GetChargeStart()) / CHARGE_DURATION, 0, 1) or 0
 		local burst  = math.Clamp(1.0 - (ct - self:GetLastBlastTime()) * 1.5, 0, 1)
 
-		-- 1) Draw Full 3D Omega Chamber Structure + Capsule + Monitor Stand
+		-- 1) Draw Full 3D Omega Chamber Structure + Capsule + Physical Monitor Stand
 		RICK_PORTAL.OmegaRenderer:DrawOmegaChamberStructure(pos, ang, charge, burst, IsValid(subj))
 
-		-- 2) Draw Interactive Diegetic 3D2D Monitor Screen RIGHT INSIDE THE MONITOR MODEL!
-		--    Monitor housing is at Local(62, 0, 52) tilted -28°; front screen surface sits at Local(65.2, 0, 53.6)
-		local scrOrigin, scrAng = LocalToWorld(Vector(65.2, 0, 53.6), Angle(0, 90, 62), pos, ang)
+		-- 2) Interactive 3D2D Monitor Screen right on the physical angled console!
+		--    Notice Angle(0, 90, 62): Up() points outward (+X,+Z) directly toward the operator standing in front!
+		local scrOrigin, scrAng = LocalToWorld(Vector(65.5, 0, 53.8), Angle(0, 90, 62), pos, ang)
 		local uiScale = 0.105
 
 		local curX, curY, onScreen = self:GetMonitorCursor(scrOrigin, scrAng, uiScale)
+		local keyNow = input.IsKeyDown(KEY_E) or input.IsMouseDown(MOUSE_LEFT)
 		local clicked = false
-		if onScreen and (CurTime() - (self.LastClickTime or 0)) > 0.28 then
-			if input.IsKeyDown(KEY_E) or input.IsMouseDown(MOUSE_LEFT) then
-				self.LastClickTime = CurTime()
-				clicked = true
-				surface.PlaySound("rick_portal/tablet_tap.wav")
-			end
+
+		if keyNow and not self.WasKeyDown and onScreen and (ct - (self.LastClickTime or 0)) > 0.18 then
+			self.LastClickTime = ct
+			clicked = true
+			surface.PlaySound("rick_portal/tablet_tap.wav")
 		end
+		self.WasKeyDown = keyNow
 
 		local function DrawBtn(bx, by, bw, bh, label, bgCol, hoverCol)
-			local hovered = onScreen and curX >= bx and curX <= (bx + bw) and curY >= by and curY <= (by + bh)
+			local hovered = onScreen and curX and (curX >= bx and curX <= (bx + bw) and curY >= by and curY <= (by + bh))
 			draw.RoundedBox(6, bx, by, bw, bh, hovered and hoverCol or bgCol)
-			surface.SetDrawColor(115, 225, 255, hovered and 255 or 120)
-			surface.DrawOutlinedRect(bx, by, bw, bh, 1)
-			draw.SimpleText(label, "DermaDefaultBold", bx + bw * 0.5, by + bh * 0.5, Color(235, 250, 255), TEXT_ALIGN_CENTER, TEXT_ALIGN_CENTER)
+			surface.SetDrawColor(135, 235, 255, hovered and 255 or 125)
+			surface.DrawOutlinedRect(bx, by, bw, bh, hovered and 2 or 1)
+			draw.SimpleText(label, "DermaDefaultBold", bx + bw * 0.5, by + bh * 0.5, Color(240, 252, 255), TEXT_ALIGN_CENTER, TEXT_ALIGN_CENTER)
 			return hovered and clicked
 		end
 
 		cam.Start3D2D(scrOrigin, scrAng, uiScale)
-			-- Screen CRT Background
-			draw.RoundedBox(8, -215, -145, 430, 290, Color(10, 16, 28, 248))
-			surface.SetDrawColor(75, 210, 255, 230)
+			draw.RoundedBox(8, -215, -145, 430, 290, Color(10, 16, 28, 250))
+			surface.SetDrawColor(75, 210, 255, 235)
 			surface.DrawOutlinedRect(-215, -145, 430, 290, 2)
 
-			draw.SimpleText("ТЕРМИНАЛ ОМЕГА-УСТРОЙСТВА [НАВЕДИ И НАЖМИ E]", "DermaDefaultBold", 0, -126, Color(95, 225, 255), TEXT_ALIGN_CENTER, TEXT_ALIGN_CENTER)
+			draw.SimpleText("МОНИТОР ОМЕГА-УСТРОЙСТВА [НАВЕДИ ПРИЦЕЛ И НАЖМИ E / ЛКМ]", "DermaDefaultBold", 0, -126, Color(95, 225, 255), TEXT_ALIGN_CENTER, TEXT_ALIGN_CENTER)
 			surface.SetDrawColor(65, 180, 235, 120)
 			surface.DrawRect(-200, -112, 400, 2)
 
-			-- Left Column: Available Subspecies on Map -> Click to Teleport 1 Specimen into Stasis Capsule!
-			draw.SimpleText("ПОДВИДЫ В РЕАЛЬНОСТИ (В КАПСУЛУ):", "DermaDefaultBold", -105, -96, Color(185, 235, 255), TEXT_ALIGN_CENTER, TEXT_ALIGN_CENTER)
+			-- Left Column: Subspecies on Map -> Click to Teleport 1 Specimen into Stasis Capsule!
+			draw.SimpleText("ПОДВИДЫ В МИРЕ (ТЕПНУТЬ В КАПСУЛУ):", "DermaDefaultBold", -105, -96, Color(185, 235, 255), TEXT_ALIGN_CENTER, TEXT_ALIGN_CENTER)
 
 			local list = self:GatherMapSubspecies()
 			if #list == 0 then
-				draw.SimpleText("Нет доступных целей", "DermaDefault", -105, -20, Color(140, 165, 185), TEXT_ALIGN_CENTER, TEXT_ALIGN_CENTER)
+				draw.SimpleText("Заспавните NPC или проп рядом", "DermaDefault", -105, -20, Color(145, 170, 195), TEXT_ALIGN_CENTER, TEXT_ALIGN_CENTER)
 			else
 				local maxRows = 5
 				local startIdx = math.Clamp(self.ScrollOffset + 1, 1, math.max(1, #list - maxRows + 1))
@@ -325,7 +331,7 @@ if CLIENT then
 					local item = list[startIdx + row]
 					local ry = -78 + row * 34
 					local txt = string.sub(item.name, 1, 20) .. " (" .. item.count .. ")"
-					if DrawBtn(-202, ry, 195, 28, txt, Color(20, 38, 62, 235), Color(42, 88, 138, 255)) then
+					if DrawBtn(-202, ry, 195, 29, txt, Color(20, 40, 66, 240), Color(48, 98, 155, 255)) then
 						net.Start("RickOmega_ConsoleCmd")
 							net.WriteEntity(self)
 							net.WriteString("capture")
@@ -345,7 +351,7 @@ if CLIENT then
 			end
 
 			-- Right Column: Stasis Capsule Status + ERASE ALL ACROSS MULTIVERSE Button!
-			surface.SetDrawColor(65, 180, 235, 90)
+			surface.SetDrawColor(65, 180, 235, 95)
 			surface.DrawRect(4, -104, 2, 235)
 
 			draw.SimpleText("КАПСУЛА ЗАТОЧЕНИЯ:", "DermaDefaultBold", 108, -96, Color(255, 195, 115), TEXT_ALIGN_CENTER, TEXT_ALIGN_CENTER)
@@ -353,14 +359,14 @@ if CLIENT then
 			if IsValid(subj) then
 				local _, sName = RICK_PORTAL.GetSubspeciesSignature(subj)
 				draw.RoundedBox(6, 16, -76, 186, 46, Color(24, 48, 72, 235))
-				draw.SimpleText("ОБРАЗЕЦ В КАПСУЛЕ:", "DermaDefault", 109, -63, Color(145, 225, 255), TEXT_ALIGN_CENTER, TEXT_ALIGN_CENTER)
+				draw.SimpleText("ЗАТОЧЁН В КАПСУЛЕ:", "DermaDefault", 109, -63, Color(145, 225, 255), TEXT_ALIGN_CENTER, TEXT_ALIGN_CENTER)
 				draw.SimpleText(string.sub(tostring(sName), 1, 22), "DermaDefaultBold", 109, -44, Color(255, 255, 255), TEXT_ALIGN_CENTER, TEXT_ALIGN_CENTER)
 
 				if self:GetIsCharging() then
-					draw.RoundedBox(6, 16, -18, 186, 48, Color(65, 165, 255, 240))
-					draw.SimpleText("СТИРАНИЕ...", "DermaDefaultBold", 109, 6, Color(255, 255, 255), TEXT_ALIGN_CENTER, TEXT_ALIGN_CENTER)
+					draw.RoundedBox(6, 16, -18, 186, 48, Color(65, 165, 255, 245))
+					draw.SimpleText("⚡ СТИРАНИЕ...", "DermaDefaultBold", 109, 6, Color(255, 255, 255), TEXT_ALIGN_CENTER, TEXT_ALIGN_CENTER)
 				else
-					if DrawBtn(16, -18, 186, 48, "⚡ СТЕРЕТЬ НАВСЕГДА", Color(155, 28, 42, 245), Color(225, 48, 65, 255)) then
+					if DrawBtn(16, -18, 186, 48, "⚡ СТЕРЕТЬ ИЗ ВСЕЛЕННЫХ", Color(165, 28, 42, 248), Color(235, 48, 65, 255)) then
 						net.Start("RickOmega_ConsoleCmd")
 							net.WriteEntity(self)
 							net.WriteString("erase")
@@ -382,7 +388,6 @@ if CLIENT then
 				draw.SimpleText("Выберите подвид слева", "DermaDefault", 109, -22, Color(120, 150, 175), TEXT_ALIGN_CENTER, TEXT_ALIGN_CENTER)
 			end
 
-			-- Bottom Reset Multiverse Button
 			local erasedCount = table.Count(RICK_PORTAL.ErasedSubspecies or {})
 			if DrawBtn(16, 94, 186, 32, string.format("ВОССТАНОВИТЬ ВСЕЛЕННЫЕ (%d)", erasedCount), Color(26, 62, 58, 235), Color(42, 115, 102, 255)) then
 				net.Start("RickOmega_ConsoleCmd")
@@ -392,9 +397,8 @@ if CLIENT then
 				net.SendToServer()
 			end
 
-			-- Draw glowing cyan cursor dot right on the 3D monitor surface!
 			if onScreen and curX and curY then
-				surface.DrawCircle(curX, curY, 5, 125, 245, 255, 255)
+				surface.DrawCircle(curX, curY, 6, 125, 245, 255, 255)
 				surface.SetDrawColor(255, 255, 255, 255)
 				surface.DrawRect(curX - 2, curY - 2, 4, 4)
 			end

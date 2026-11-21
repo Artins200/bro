@@ -1,5 +1,5 @@
 -- ============================================================================
--- Rick and Morty Addon - Shared Config, Multiverse Extinction & Time Travel Engine
+-- Rick and Morty Addon - Shared Config, Multiverse Extinction & Full Combat Time-Rewind Engine
 -- ============================================================================
 
 AddCSLuaFile()
@@ -12,7 +12,6 @@ function RICK_PORTAL.GetSubspeciesSignature(ent)
 	local cls = ent:GetClass()
 	local mdl = string.lower(ent:GetModel() or "")
 
-	-- NEVER erase worldspawn, internal controllers, or 4th-dimensional Time Police!
 	if ent:IsWorld() then return nil, nil end
 	if cls == "predicted_viewmodel" or cls == "gmod_hands" or cls == "ent_omega_device" or cls == "npc_time_police" or cls == "ent_past_self_clone" then
 		return nil, nil
@@ -58,18 +57,16 @@ if SERVER then
 	util.AddNetworkString("RickOmega_VaporizeFX")
 	util.AddNetworkString("RickTime_RiftFX")
 
-	-- Resources
+	-- Resources (only Omega Chamber station + Portal Gun + Chrono Gun + Time Police!)
 	resource.AddSingleFile("materials/rick_portal/portal_swirl.png")
 	resource.AddSingleFile("materials/rick_portal/portal_inner_swirl.png")
 	resource.AddSingleFile("materials/rick_portal/liquid_blob.png")
 	resource.AddSingleFile("materials/entities/weapon_rick_portalgun.png")
 	resource.AddSingleFile("materials/entities/ent_rick_portal.png")
 	resource.AddSingleFile("materials/entities/ent_omega_device.png")
-	resource.AddSingleFile("materials/entities/weapon_omega_device.png")
 	resource.AddSingleFile("materials/entities/weapon_chrono_gun.png")
 	resource.AddSingleFile("materials/entities/npc_time_police.png")
 	resource.AddSingleFile("materials/vgui/entities/weapon_rick_portalgun.png")
-	resource.AddSingleFile("materials/vgui/entities/weapon_omega_device.png")
 	resource.AddSingleFile("materials/vgui/entities/weapon_chrono_gun.png")
 
 	resource.AddSingleFile("sound/rick_portal/portal_shoot.wav")
@@ -188,7 +185,7 @@ if SERVER then
 		if table.IsEmpty(RICK_PORTAL.ErasedSubspecies) then return end
 		timer.Simple(0.05, function()
 			if IsValid(ply) and ply:Alive() and RICK_PORTAL.MatchesErasedSubspecies(ply) then
-				ply:ChatPrint("[OMEGA DEVICE] Ваш подвид стёрт из всех вселенных! Смените скин или сбросьте Омега-устройство (R).")
+				ply:ChatPrint("[OMEGA DEVICE] Ваш подвид стёрт из всех вселенных! Смените скин или восстановите вселенные на мониторе Омега-устройства.")
 				RICK_PORTAL.VaporizeSingleEntity(ply, nil)
 			end
 		end)
@@ -201,19 +198,47 @@ if SERVER then
 	end)
 
 	-- ========================================================================
-	-- 2. TIME TRAVEL ENGINE:
-	--    * Records rolling 30s history (12.5 Hz) of every player's movement & animations
-	--    * Teleports player backward in time + spawns their living Past Self Clone
-	--      replaying their exact movements from N seconds ago!
-	--    * Starts a strict 35-SECOND DEADLINE: if not returned to present in 35s,
-	--      4th-Dimensional TIME POLICE spawn around them shouting "НУ ВСЁ, УЕБОК, НА СРОК!"
+	-- 2. FULL COMBAT & NPC TIME-REWIND ENGINE:
+	--    * Records rolling 30s history of Players AND all NPCs (positions, angles,
+	--      combat sequences, gunfire tracers, and exact death timestamps!).
+	--    * When rewinding N seconds back:
+	--      1) Spawns your shootable/killable Past Self Clone replaying your battle
+	--         (including shooting tracers at the NPCs!).
+	--      2) REVIVES dead NPCs that were killed during those N seconds and spawns
+	--         Temporal Echoes replaying your fight with them!
+	--      3) Surviving live NPCs on the map are rewound to their past positions/HP
+	--         and react in shock to seeing TWO of you (Future You + Past You)!
+	--    * 35-second Time Police detention deadline (detains you in a cage, killable!).
 	-- ========================================================================
-	RICK_PORTAL.TimeHistory = RICK_PORTAL.TimeHistory or {}
+	RICK_PORTAL.TimeHistory         = RICK_PORTAL.TimeHistory or {}
+	RICK_PORTAL.NPCTimeHistory      = RICK_PORTAL.NPCTimeHistory or {}
+	RICK_PORTAL.PendingFireEvents   = RICK_PORTAL.PendingFireEvents or {}
 	RICK_PORTAL.ActiveTimeTravelers = RICK_PORTAL.ActiveTimeTravelers or {}
 
 	local RECORD_INTERVAL = 0.08
-	local MAX_FRAMES      = 380 -- ~30.4 seconds of movement history
+	local WINDOW_SECONDS  = 32.0
 	local NEXT_REC_AT     = 0
+	local NEXT_NPC_ID     = 1
+
+	-- Capture weapon gunfire events for both Players & NPCs so Past Self & Past NPCs shoot in the replay!
+	hook.Add("EntityFireBullets", "RickTime_RecordBulletShots", function(ent, data)
+		if not IsValid(ent) then return end
+		local aimEnd = (data.Src or ent:WorldSpaceCenter()) + (data.Dir or ent:GetForward()) * 750
+		RICK_PORTAL.PendingFireEvents[ent] = {
+			aimPos  = aimEnd,
+			fireSnd = ent:IsPlayer() and "Weapon_SMG1.Single" or "Weapon_AR2.NPC_Single"
+		}
+	end)
+
+	hook.Add("OnNPCKilled", "RickTime_RecordNPCDeath", function(npc, attacker, inflictor)
+		if not IsValid(npc) or not npc.RickTrackID then return end
+		local rec = RICK_PORTAL.NPCTimeHistory[npc.RickTrackID]
+		if rec then
+			rec.deathTime = CurTime()
+			rec.deathPos  = npc:GetPos()
+			rec.deathAng  = npc:GetAngles()
+		end
+	end)
 
 	function RICK_PORTAL.SyncWeaponTimeState(ply, wep)
 		if not IsValid(ply) then return end
@@ -237,12 +262,55 @@ if SERVER then
 		net.Broadcast()
 	end
 
+	function RICK_PORTAL.SummonTimePoliceForPlayer(ply, customLine)
+		if not IsValid(ply) or not ply:Alive() then return end
+		local st = RICK_PORTAL.ActiveTimeTravelers[ply]
+		if st and st.policeSpawned then return end
+
+		if st then
+			st.policeSpawned = true
+			st.cops = st.cops or {}
+		end
+
+		for i = 1, 2 do
+			local angOff = math.rad(i * 180 - 35)
+			local offset = Vector(math.cos(angOff) * 140, math.sin(angOff) * 140, 10)
+			local trC = util.TraceLine({
+				start  = ply:WorldSpaceCenter(),
+				endpos = ply:GetPos() + offset,
+				filter = ply,
+				mask   = MASK_SOLID_BRUSHONLY
+			})
+			local copPos = trC.Hit and (trC.HitPos - offset:GetNormalized() * 24) or (ply:GetPos() + offset)
+
+			local cop = ents.Create("npc_time_police")
+			if IsValid(cop) then
+				cop:SetPos(copPos)
+				cop:SetAngles((ply:GetPos() - copPos):Angle())
+				cop:SetTargetCriminal(ply)
+				cop:Spawn()
+				cop:Activate()
+				if customLine then
+					cop:SetSpeechText(customLine)
+				end
+				if st then
+					st.cops[#st.cops + 1] = cop
+				end
+			end
+		end
+	end
+
 	function RICK_PORTAL.ClearPlayerTimeTravelState(ply, keepPolice)
 		local st = RICK_PORTAL.ActiveTimeTravelers[ply]
 		if not st then return end
 
 		if IsValid(st.clone) then
 			st.clone:Remove()
+		end
+		if st.echoNPCs then
+			for _, e in ipairs(st.echoNPCs) do
+				if IsValid(e) then e:Remove() end
+			end
 		end
 		if not keepPolice and st.cops then
 			for _, cop in ipairs(st.cops) do
@@ -254,32 +322,44 @@ if SERVER then
 		RICK_PORTAL.SyncWeaponTimeState(ply)
 	end
 
+	function RICK_PORTAL.ForceReturnAfterSentence(ply)
+		if not IsValid(ply) then return end
+		local st = RICK_PORTAL.ActiveTimeTravelers[ply]
+		if st and st.presentPos then
+			BroadcastTimeRift(ply:GetPos() + Vector(0, 0, 36), true)
+			ply:SetPos(st.presentPos)
+			ply:SetEyeAngles(st.presentAng)
+			ply:EmitSound("RickTime.Warp")
+			ply:ScreenFade(SCREENFADE.IN, Color(85, 235, 255, 150), 0.5, 0.05)
+		end
+		RICK_PORTAL.ClearPlayerTimeTravelState(ply, false)
+	end
+
 	function RICK_PORTAL.StartTimeJumpBack(ply, secondsBack, wep)
 		if not IsValid(ply) or not ply:Alive() then return end
 		local stCurrent = RICK_PORTAL.ActiveTimeTravelers[ply]
 		if stCurrent and stCurrent.inPast then return end
 
-		secondsBack = math.Clamp(secondsBack or 10, 5, 25)
-		local hist = RICK_PORTAL.TimeHistory[ply] or {}
+		secondsBack     = math.Clamp(secondsBack or 10, 5, 25)
+		local now       = CurTime()
+		local targetT   = now - secondsBack
+		local plyHist   = RICK_PORTAL.TimeHistory[ply] or {}
 
-		-- Save exact Present anchor so returning brings them right back to their timeline!
 		local presentPos = ply:GetPos()
 		local presentAng = ply:EyeAngles()
-		local presentHP  = ply:Health()
 
-		local framesNeeded = math.floor(secondsBack / RECORD_INTERVAL)
-		local startIdx = math.max(1, #hist - framesNeeded)
+		-- 1) Slice Player's recorded timeline from `targetT` .. `now`
 		local replaySlice = {}
-		for i = startIdx, #hist do
-			replaySlice[#replaySlice + 1] = hist[i]
+		for _, f in ipairs(plyHist) do
+			if f.t >= targetT then
+				replaySlice[#replaySlice + 1] = f
+			end
 		end
 
-		-- Determine where the player was N seconds ago (or nearby offset if freshly spawned)
 		local pastStartPos = (#replaySlice > 0) and replaySlice[1].pos or (presentPos - ply:GetForward() * 90)
 		local pastStartAng = (#replaySlice > 0) and replaySlice[1].ang or presentAng
 
-		-- Place the player slightly behind/beside their Past Self so they IMMEDIATELY see themselves from the past!
-		local viewOffset = Angle(0, pastStartAng.y, 0):Forward() * -95 + Angle(0, pastStartAng.y, 0):Right() * 35
+		local viewOffset = Angle(0, pastStartAng.y, 0):Forward() * -95 + Angle(0, pastStartAng.y, 0):Right() * 38
 		local trSafe = util.TraceHull({
 			start  = pastStartPos + Vector(0, 0, 16),
 			endpos = pastStartPos + viewOffset + Vector(0, 0, 16),
@@ -290,17 +370,75 @@ if SERVER then
 		})
 		local arrivePos = trSafe.HitPos
 
-		-- Spawn the living Past Self Clone replaying their exact recorded movements!
+		-- 2) Spawn Shootable/Killable Past Self Clone replaying your battle & gunfire!
 		local clone = ents.Create("ent_past_self_clone")
 		if IsValid(clone) then
 			clone:SetPos(pastStartPos)
 			clone:SetAngles(Angle(0, pastStartAng.y, 0))
 			if #replaySlice == 0 then
-				replaySlice[1] = { pos = pastStartPos, ang = pastStartAng, seq = ply:GetSequence(), cycle = 0 }
+				replaySlice[1] = { t = now, pos = pastStartPos, ang = pastStartAng, seq = ply:GetSequence() }
 			end
-			clone:SetTimelineFrames(replaySlice, ply)
+			clone:SetupPlayerEcho(replaySlice, ply)
 			clone:Spawn()
 			clone:Activate()
+		end
+
+		-- 3) Rewind & Revive NPCs!
+		--    * Dead NPCs killed after `targetT` come back to life as Temporal Combat Echoes
+		--      replaying their exact fight & gunfire against your Past Self (and if YOU save/kill them differently, reality reacts!).
+		--    * Live NPCs rewind to their past position/HP and react in shock to the time-traveler!
+		local echoNPCs     = {}
+		local revivedCount = 0
+
+		-- Remove fresh corpses of NPCs that weren't dead yet at `targetT`!
+		for _, rag in ipairs(ents.FindByClass("prop_ragdoll")) do
+			if IsValid(rag) and rag:GetCreationTime() >= targetT then
+				rag:Remove()
+			end
+		end
+
+		for trackID, rec in pairs(RICK_PORTAL.NPCTimeHistory) do
+			local npcSlice = {}
+			for _, nf in ipairs(rec.frames) do
+				if nf.t >= targetT then
+					npcSlice[#npcSlice + 1] = nf
+				end
+			end
+
+			if #npcSlice > 0 then
+				if IsValid(rec.ent) and rec.ent:Health() > 0 then
+					-- Live NPC: rewind to its past position & HP and make it react to the time jump!
+					local firstF = npcSlice[1]
+					rec.ent:SetPos(firstF.pos)
+					rec.ent:SetAngles(Angle(0, firstF.ang.y, 0))
+					if firstF.hp and firstF.hp > rec.ent:Health() then
+						rec.ent:SetHealth(firstF.hp)
+					end
+					BroadcastTimeRift(firstF.pos + Vector(0, 0, 36), false)
+
+					-- NPC notices the temporal anomaly & alerts/reacts!
+					if rec.ent:IsNPC() then
+						rec.ent:SetSchedule(SCHED_ALERT_FACE)
+						rec.ent:UpdateEnemyMemory(ply, arrivePos)
+					end
+				elseif rec.deathTime and rec.deathTime >= targetT then
+					-- Dead NPC killed during the last N seconds -> REVIVE IN THE PAST to replay the fight!
+					revivedCount = revivedCount + 1
+					rec.diedInWindow = true
+					rec.killedInPastIntervention = false
+
+					local npcEcho = ents.Create("ent_past_self_clone")
+					if IsValid(npcEcho) then
+						npcEcho:SetPos(npcSlice[1].pos)
+						npcEcho:SetAngles(Angle(0, npcSlice[1].ang.y, 0))
+						npcEcho:SetupNPCEcho(npcSlice, rec)
+						npcEcho:Spawn()
+						npcEcho:Activate()
+						echoNPCs[#echoNPCs + 1] = npcEcho
+						BroadcastTimeRift(npcSlice[1].pos + Vector(0, 0, 36), false)
+					end
+				end
+			end
 		end
 
 		BroadcastTimeRift(presentPos + Vector(0, 0, 36), false)
@@ -316,15 +454,15 @@ if SERVER then
 			inPast        = true,
 			presentPos    = presentPos,
 			presentAng    = presentAng,
-			presentHP     = presentHP,
 			deadline      = deadline,
 			policeSpawned = false,
 			clone         = clone,
+			echoNPCs      = echoNPCs,
 			cops          = {}
 		}
 
 		RICK_PORTAL.SyncWeaponTimeState(ply, wep)
-		ply:ChatPrint(string.format("[ПУШКА ВРЕМЕНИ] Вы откатились на %d сек. в прошлое! Перед вами — ВЫ ИЗ ПРОШЛОГО! У вас ровно 35 сек., чтобы вернуться (ПКМ)!", secondsBack))
+		ply:ChatPrint(string.format("[ПУШКА ВРЕМЕНИ] Откат на %d сек. назад! Убитых NPC воскрешено в прошлом: %d — смотрите, как вы с ними сражаетесь! (35 сек. до Полиции Времени)", secondsBack, revivedCount))
 	end
 
 	function RICK_PORTAL.ReturnToPresentTimeline(ply, wep)
@@ -332,8 +470,9 @@ if SERVER then
 		local st = RICK_PORTAL.ActiveTimeTravelers[ply]
 		if not st or not st.inPast then return end
 
-		if st.policeSpawned then
-			ply:ChatPrint("[ПОЛИЦИЯ ВРЕМЕНИ]: Поздно валить в настоящее, уебок! Время вышло — ты под арестом!")
+		-- Cannot escape while actively detained in handcuffs by living Time Police!
+		if ply:GetNWBool("RickTime_Detained", false) then
+			ply:ChatPrint("[ПОЛИЦИЯ ВРЕМЕНИ]: Куда собрался, уебок?! Ты в наручниках — отбывай срок или дерись с конвоем!")
 			ply:EmitSound("buttons/button10.wav", 75, 85, 0.8)
 			return
 		end
@@ -345,7 +484,7 @@ if SERVER then
 		ply:SetEyeAngles(st.presentAng)
 		ply:EmitSound("RickTime.Warp")
 		ply:ScreenFade(SCREENFADE.IN, Color(85, 235, 255, 160), 0.50, 0.05)
-		ply:ChatPrint("[ПУШКА ВРЕМЕНИ] Вы вовремя вернулись в своё настоящее время! Полиция Времени не заметила пробоя.")
+		ply:ChatPrint("[ПУШКА ВРЕМЕНИ] Вы вернулись в своё настоящее время!")
 
 		RICK_PORTAL.ClearPlayerTimeTravelState(ply, false)
 	end
@@ -353,9 +492,11 @@ if SERVER then
 	hook.Add("Think", "RickTime_RecorderAndPoliceDeadline", function()
 		local ct = CurTime()
 
-		-- 1) Record player history when NOT currently inside the past
 		if ct >= NEXT_REC_AT then
 			NEXT_REC_AT = ct + RECORD_INTERVAL
+			local cutoff = ct - WINDOW_SECONDS
+
+			-- 1) Record Players (when not currently inside the past)
 			for _, ply in ipairs(player.GetAll()) do
 				if IsValid(ply) and ply:Alive() then
 					local st = RICK_PORTAL.ActiveTimeTravelers[ply]
@@ -365,56 +506,90 @@ if SERVER then
 							h = {}
 							RICK_PORTAL.TimeHistory[ply] = h
 						end
+
+						local fireEv = RICK_PORTAL.PendingFireEvents[ply]
+						RICK_PORTAL.PendingFireEvents[ply] = nil
+
 						h[#h + 1] = {
-							pos   = ply:GetPos(),
-							ang   = ply:EyeAngles(),
-							seq   = ply:GetSequence(),
-							cycle = ply:GetCycle()
+							t       = ct,
+							pos     = ply:GetPos(),
+							ang     = ply:EyeAngles(),
+							seq     = ply:GetSequence(),
+							fired   = fireEv ~= nil,
+							aimPos  = fireEv and fireEv.aimPos or nil,
+							fireSnd = fireEv and fireEv.fireSnd or nil
 						}
-						if #h > MAX_FRAMES then
+
+						while #h > 0 and h[1].t < cutoff do
 							table.remove(h, 1)
 						end
 					end
 				end
 			end
+
+			-- 2) Record all NPCs / NextBots on the map (for reviving dead NPCs & replaying battles!)
+			for _, ent in ipairs(ents.GetAll()) do
+				if IsValid(ent) and (ent:IsNPC() or ent:IsNextBot()) and ent:GetClass() ~= "npc_time_police" then
+					if not ent.RickTrackID then
+						ent.RickTrackID = NEXT_NPC_ID
+						NEXT_NPC_ID = NEXT_NPC_ID + 1
+						local _, pretty = RICK_PORTAL.GetSubspeciesSignature(ent)
+						RICK_PORTAL.NPCTimeHistory[ent.RickTrackID] = {
+							ent        = ent,
+							class      = ent:GetClass(),
+							model      = ent:GetModel(),
+							skin       = ent:GetSkin() or 0,
+							prettyName = pretty or ent:GetClass(),
+							maxHP      = ent:GetMaxHealth() > 0 and ent:GetMaxHealth() or ent:Health(),
+							frames     = {}
+						}
+					end
+
+					local rec = RICK_PORTAL.NPCTimeHistory[ent.RickTrackID]
+					if rec and ent:Health() > 0 then
+						local fireEv = RICK_PORTAL.PendingFireEvents[ent]
+						RICK_PORTAL.PendingFireEvents[ent] = nil
+
+						rec.frames[#rec.frames + 1] = {
+							t       = ct,
+							pos     = ent:GetPos(),
+							ang     = ent:GetAngles(),
+							seq     = ent:GetSequence(),
+							hp      = ent:Health(),
+							fired   = fireEv ~= nil,
+							aimPos  = fireEv and fireEv.aimPos or nil,
+							fireSnd = fireEv and fireEv.fireSnd or nil
+						}
+
+						while #rec.frames > 0 and rec.frames[1].t < cutoff do
+							table.remove(rec.frames, 1)
+						end
+					end
+				end
+			end
+
+			-- Prune expired dead NPC histories older than 32s
+			for trackID, rec in pairs(RICK_PORTAL.NPCTimeHistory) do
+				if not IsValid(rec.ent) and rec.deathTime and rec.deathTime < cutoff then
+					RICK_PORTAL.NPCTimeHistory[trackID] = nil
+				end
+			end
 		end
 
-		-- 2) Check 35-second Time Travel Deadline -> Spawn 4th-Dimensional Time Police Squad!
+		-- 3) Check 35-second Time Travel Deadline -> Summon Time Police to DETAIN the offender!
 		for ply, st in pairs(RICK_PORTAL.ActiveTimeTravelers) do
 			if not IsValid(ply) or not ply:Alive() then
 				RICK_PORTAL.ClearPlayerTimeTravelState(ply, true)
 			elseif st.inPast and not st.policeSpawned and ct >= st.deadline then
-				st.policeSpawned = true
-				st.cops = {}
-
-				-- Spawn 2 Time Police officers around the player in purple temporal rifts!
-				for i = 1, 2 do
-					local angOff = math.rad(i * 180 - 35)
-					local offset = Vector(math.cos(angOff) * 145, math.sin(angOff) * 145, 12)
-					local trC = util.TraceLine({
-						start  = ply:WorldSpaceCenter(),
-						endpos = ply:GetPos() + offset,
-						filter = ply,
-						mask   = MASK_SOLID_BRUSHONLY
-					})
-					local copPos = trC.Hit and (trC.HitPos - offset:GetNormalized() * 24) or (ply:GetPos() + offset)
-
-					local cop = ents.Create("npc_time_police")
-					if IsValid(cop) then
-						cop:SetPos(copPos)
-						cop:SetAngles((ply:GetPos() - copPos):Angle())
-						cop:SetTargetCriminal(ply)
-						cop:Spawn()
-						cop:Activate()
-						st.cops[#st.cops + 1] = cop
-					end
-				end
+				RICK_PORTAL.SummonTimePoliceForPlayer(ply)
 			end
 		end
 	end)
 
 	hook.Add("PlayerDeath", "RickTime_CleanupOnDeath", function(ply)
-		RICK_PORTAL.ClearPlayerTimeTravelState(ply, true)
+		ply:SetNWBool("RickTime_Detained", false)
+		ply:SetNWFloat("RickTime_SentenceEnd", 0)
+		RICK_PORTAL.ClearPlayerTimeTravelState(ply, false)
 	end)
 else
 	CreateClientConVar("cl_rickportal_dlight", "1", true, false, "Enable dynamic lighting on portals, portal gun and Omega Device")
@@ -429,7 +604,7 @@ else
 		end
 	end)
 
-	local matParticleGlow = CreateMaterial("RickOmega_ParticleGlow_v2", "UnlitGeneric", {
+	local matParticleGlow = CreateMaterial("RickOmega_ParticleGlow_v3", "UnlitGeneric", {
 		["$basetexture"] = "sprites/light_glow02",
 		["$additive"]    = "1",
 		["$vertexcolor"] = "1",
@@ -437,6 +612,7 @@ else
 	})
 
 	RICK_PORTAL.ActiveVaporizeArcs = RICK_PORTAL.ActiveVaporizeArcs or {}
+	RICK_PORTAL.ActiveTimeRifts    = RICK_PORTAL.ActiveTimeRifts or {}
 
 	net.Receive("RickOmega_VaporizeFX", function()
 		local pos = net.ReadVector()
@@ -470,11 +646,6 @@ else
 		end
 	end)
 
-	local matLaser = Material("Effects/laser1")
-	local matGlow  = Material("sprites/light_glow02_add")
-
-	RICK_PORTAL.ActiveTimeRifts = RICK_PORTAL.ActiveTimeRifts or {}
-
 	net.Receive("RickTime_RiftFX", function()
 		local pos      = net.ReadVector()
 		local isReturn = net.ReadBool()
@@ -507,11 +678,13 @@ else
 		end
 	end)
 
+	local matLaser = Material("Effects/laser1")
+	local matGlow  = Material("sprites/light_glow02_add")
+
 	hook.Add("PostDrawTranslucentRenderables", "RickOmega_DrawVaporizeArcs", function(bDepth, bSkybox)
 		if bSkybox then return end
 		local ct = CurTime()
 
-		-- 1) Draw Chrono-Rewind Temporal Rifts (expanding clock-ring shockwaves!)
 		local rifts = RICK_PORTAL.ActiveTimeRifts
 		if rifts and #rifts > 0 then
 			for i = #rifts, 1, -1 do
@@ -539,7 +712,6 @@ else
 			end
 		end
 
-		-- 2) Draw Omega Vaporize Lightning Arcs
 		local list = RICK_PORTAL.ActiveVaporizeArcs
 		if not list or #list == 0 then return end
 
