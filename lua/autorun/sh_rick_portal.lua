@@ -1,13 +1,10 @@
 -- ============================================================================
--- Rick and Morty Addon - Shared Config, Sounds & Multiverse Subspecies Ban List
+-- Rick and Morty Addon - Shared Config, Multiverse Extinction & Time Travel Engine
 -- ============================================================================
 
 AddCSLuaFile()
 
 RICK_PORTAL = RICK_PORTAL or {}
-
--- Stores subspecies erased across ALL universes in the current session!
--- Keys are subspecies identifiers (exact model path for props/NPCs/ragdolls + class fallback).
 RICK_PORTAL.ErasedSubspecies = RICK_PORTAL.ErasedSubspecies or {}
 
 function RICK_PORTAL.GetSubspeciesSignature(ent)
@@ -15,14 +12,12 @@ function RICK_PORTAL.GetSubspeciesSignature(ent)
 	local cls = ent:GetClass()
 	local mdl = string.lower(ent:GetModel() or "")
 
-	-- Never erase worldspawn or essential internal controllers
+	-- NEVER erase worldspawn, internal controllers, or 4th-dimensional Time Police!
 	if ent:IsWorld() then return nil, nil end
-	if cls == "predicted_viewmodel" or cls == "gmod_hands" or cls == "ent_omega_device" then
+	if cls == "predicted_viewmodel" or cls == "gmod_hands" or cls == "ent_omega_device" or cls == "npc_time_police" or cls == "ent_past_self_clone" then
 		return nil, nil
 	end
 
-	-- Identify subspecies:
-	-- 1) For NPCs & NextBots: combine class + model if specific, AND also ban the NPC class so ALL variants of that creature subspecies vanish!
 	if ent:IsNPC() or ent:IsNextBot() then
 		local pretty = ent.PrintName and ent.PrintName ~= "" and ent.PrintName or language.GetPhrase(cls)
 		if pretty == cls then
@@ -32,13 +27,11 @@ function RICK_PORTAL.GetSubspeciesSignature(ent)
 		return "class:" .. cls, pretty, mdl
 	end
 
-	-- 2) For Players: subspecies is their playermodel (or player class) — kills all players using that playermodel and vaporizes if respawned with it
 	if ent:IsPlayer() then
 		local shortMdl = string.GetFileFromFilename(mdl) or mdl
 		return "playermodel:" .. mdl, "Subspecies (" .. shortMdl .. ")", mdl
 	end
 
-	-- 3) For Props / Ragdolls / Vehicles / Entities: match exact 3D model (or class for scripted entities)
 	if string.StartWith(cls, "prop_") and mdl ~= "" then
 		local shortMdl = string.StripExtension(string.GetFileFromFilename(mdl) or mdl)
 		return "model:" .. mdl, "Object (" .. shortMdl .. ")", mdl
@@ -50,6 +43,7 @@ end
 
 function RICK_PORTAL.MatchesErasedSubspecies(ent)
 	if not IsValid(ent) then return false end
+	if ent:GetClass() == "npc_time_police" then return false end
 	local sig, _, mdl = RICK_PORTAL.GetSubspeciesSignature(ent)
 	if not sig then return false end
 	if RICK_PORTAL.ErasedSubspecies[sig] then return true, sig end
@@ -63,6 +57,7 @@ if SERVER then
 	util.AddNetworkString("RickOmega_SyncErased")
 	util.AddNetworkString("RickOmega_VaporizeFX")
 
+	-- Resources
 	resource.AddSingleFile("materials/rick_portal/portal_swirl.png")
 	resource.AddSingleFile("materials/rick_portal/portal_inner_swirl.png")
 	resource.AddSingleFile("materials/rick_portal/liquid_blob.png")
@@ -70,8 +65,11 @@ if SERVER then
 	resource.AddSingleFile("materials/entities/ent_rick_portal.png")
 	resource.AddSingleFile("materials/entities/ent_omega_device.png")
 	resource.AddSingleFile("materials/entities/weapon_omega_device.png")
+	resource.AddSingleFile("materials/entities/weapon_time_tablet.png")
+	resource.AddSingleFile("materials/entities/npc_time_police.png")
 	resource.AddSingleFile("materials/vgui/entities/weapon_rick_portalgun.png")
 	resource.AddSingleFile("materials/vgui/entities/weapon_omega_device.png")
+	resource.AddSingleFile("materials/vgui/entities/weapon_time_tablet.png")
 
 	resource.AddSingleFile("sound/rick_portal/portal_shoot.wav")
 	resource.AddSingleFile("sound/rick_portal/portal_open.wav")
@@ -79,10 +77,17 @@ if SERVER then
 	resource.AddSingleFile("sound/rick_portal/portal_close.wav")
 	resource.AddSingleFile("sound/rick_portal/omega_charge.wav")
 	resource.AddSingleFile("sound/rick_portal/omega_erase.wav")
+	resource.AddSingleFile("sound/rick_portal/tablet_tap.wav")
+	resource.AddSingleFile("sound/rick_portal/time_warp.wav")
+	resource.AddSingleFile("sound/rick_portal/time_police_arrive.wav")
+	resource.AddSingleFile("sound/rick_portal/time_baton_hit.wav")
 
 	CreateConVar("sv_rickportal_maxdist", "420", FCVAR_ARCHIVE + FCVAR_REPLICATED, "Max free-air flight distance before liquid transforms into a portal mid-air")
 	CreateConVar("sv_rickportal_lifetime", "0", FCVAR_ARCHIVE + FCVAR_REPLICATED, "Portal lifetime in seconds (0 = infinite until closed with Reload)")
 
+	-- ========================================================================
+	-- 1. OMEGA DEVICE MULTIVERSE EXTINCTION LOGIC
+	-- ========================================================================
 	function RICK_PORTAL.SyncErasedToClients()
 		net.Start("RickOmega_SyncErased")
 		local count = table.Count(RICK_PORTAL.ErasedSubspecies)
@@ -99,6 +104,8 @@ if SERVER then
 
 	function RICK_PORTAL.VaporizeSingleEntity(ent, attacker)
 		if not IsValid(ent) then return end
+		if ent:GetClass() == "npc_time_police" then return end
+
 		local pos = ent:WorldSpaceCenter()
 		local rad = math.Clamp(ent:BoundingRadius(), 14, 180)
 
@@ -114,21 +121,16 @@ if SERVER then
 				if IsValid(rag) then rag:Remove() end
 			end
 		else
-			-- Dissolve & erase immediately from reality
 			ent:Remove()
 		end
 	end
 
 	function RICK_PORTAL.EraseSubspeciesAcrossMultiverse(targetEnt, attacker)
-		if not IsValid(targetEnt) then return 0, nil end
+		if not IsValid(targetEnt) or targetEnt:GetClass() == "npc_time_police" then return 0, nil end
 		local sig, prettyName, mdl = RICK_PORTAL.GetSubspeciesSignature(targetEnt)
 		if not sig then return 0, nil end
 
-		RICK_PORTAL.ErasedSubspecies[sig] = {
-			name = prettyName,
-			time = CurTime()
-		}
-		-- If an NPC also has a specific model (like citizen/combine ragdoll), block ragdolls of that model too!
+		RICK_PORTAL.ErasedSubspecies[sig] = { name = prettyName, time = CurTime() }
 		if (targetEnt:IsNPC() or targetEnt:IsNextBot()) and mdl and mdl ~= "" then
 			RICK_PORTAL.ErasedSubspecies["ragdoll_mdl:" .. mdl] = {
 				name = prettyName .. " (Remains)",
@@ -139,7 +141,7 @@ if SERVER then
 
 		local erasedCount = 0
 		for _, ent in ipairs(ents.GetAll()) do
-			if IsValid(ent) and ent ~= attacker then
+			if IsValid(ent) and ent ~= attacker and ent:GetClass() ~= "npc_time_police" then
 				local match = RICK_PORTAL.MatchesErasedSubspecies(ent)
 				if not match and ent:GetClass() == "prop_ragdoll" then
 					local emdl = string.lower(ent:GetModel() or "")
@@ -164,14 +166,12 @@ if SERVER then
 		RICK_PORTAL.SyncErasedToClients()
 	end
 
-	-- PERMANENT MULTIVERSAL EXTINCTION HOOK:
-	-- Any attempt to spawn this creature/subspecies again in this universe is instantaneously erased!
 	hook.Add("OnEntityCreated", "RickOmega_PreventErasedSubspecies", function(ent)
 		if table.IsEmpty(RICK_PORTAL.ErasedSubspecies) then return end
 		timer.Simple(0, function()
-			if not IsValid(ent) then return end
+			if not IsValid(ent) or ent:GetClass() == "npc_time_police" then return end
 			local match = RICK_PORTAL.MatchesErasedSubspecies(ent)
-			if not match and (ent:GetClass() == "prop_ragdoll" or ent:GetClass() == "class C_ClientRagdoll") then
+			if not match and ent:GetClass() == "prop_ragdoll" then
 				local emdl = string.lower(ent:GetModel() or "")
 				if RICK_PORTAL.ErasedSubspecies["ragdoll_mdl:" .. emdl] then
 					match = true
@@ -196,7 +196,211 @@ if SERVER then
 	concommand.Add("rick_omega_reset", function(ply)
 		if IsValid(ply) and not ply:IsAdmin() then return end
 		RICK_PORTAL.ResetErasedMultiverse()
-		PrintMessage(HUD_PRINTTALK, "[OMEGA DEVICE] Временные линии восстановлены — стёртые подвиды возвращены в реальность.")
+		PrintMessage(HUD_PRINTTALK, "[OMEGA DEVICE] Временные линии восстановлены.")
+	end)
+
+	-- ========================================================================
+	-- 2. TIME TRAVEL ENGINE:
+	--    * Records rolling 30s history (12.5 Hz) of every player's movement & animations
+	--    * Teleports player backward in time + spawns their living Past Self Clone
+	--      replaying their exact movements from N seconds ago!
+	--    * Starts a strict 35-SECOND DEADLINE: if not returned to present in 35s,
+	--      4th-Dimensional TIME POLICE spawn around them shouting "НУ ВСЁ, УЕБОК, НА СРОК!"
+	-- ========================================================================
+	RICK_PORTAL.TimeHistory = RICK_PORTAL.TimeHistory or {}
+	RICK_PORTAL.ActiveTimeTravelers = RICK_PORTAL.ActiveTimeTravelers or {}
+
+	local RECORD_INTERVAL = 0.08
+	local MAX_FRAMES      = 380 -- ~30.4 seconds of movement history
+	local NEXT_REC_AT     = 0
+
+	function RICK_PORTAL.SyncWeaponTimeState(ply, wep)
+		if not IsValid(ply) then return end
+		local st = RICK_PORTAL.ActiveTimeTravelers[ply]
+		local tab = IsValid(wep) and wep or ply:GetWeapon("weapon_time_tablet")
+		if IsValid(tab) and tab:GetClass() == "weapon_time_tablet" then
+			if st and st.inPast then
+				tab:SetInPast(true)
+				tab:SetPastDeadline(st.deadline)
+			else
+				tab:SetInPast(false)
+				tab:SetPastDeadline(0)
+			end
+		end
+	end
+
+	function RICK_PORTAL.ClearPlayerTimeTravelState(ply, keepPolice)
+		local st = RICK_PORTAL.ActiveTimeTravelers[ply]
+		if not st then return end
+
+		if IsValid(st.clone) then
+			st.clone:Remove()
+		end
+		if not keepPolice and st.cops then
+			for _, cop in ipairs(st.cops) do
+				if IsValid(cop) then cop:Remove() end
+			end
+		end
+
+		RICK_PORTAL.ActiveTimeTravelers[ply] = nil
+		RICK_PORTAL.SyncWeaponTimeState(ply)
+	end
+
+	function RICK_PORTAL.StartTimeJumpBack(ply, secondsBack, wep)
+		if not IsValid(ply) or not ply:Alive() then return end
+		local stCurrent = RICK_PORTAL.ActiveTimeTravelers[ply]
+		if stCurrent and stCurrent.inPast then return end
+
+		secondsBack = math.Clamp(secondsBack or 10, 5, 25)
+		local hist = RICK_PORTAL.TimeHistory[ply] or {}
+
+		-- Save exact Present anchor so returning brings them right back to their timeline!
+		local presentPos = ply:GetPos()
+		local presentAng = ply:EyeAngles()
+		local presentHP  = ply:Health()
+
+		local framesNeeded = math.floor(secondsBack / RECORD_INTERVAL)
+		local startIdx = math.max(1, #hist - framesNeeded)
+		local replaySlice = {}
+		for i = startIdx, #hist do
+			replaySlice[#replaySlice + 1] = hist[i]
+		end
+
+		-- Determine where the player was N seconds ago (or nearby offset if freshly spawned)
+		local pastStartPos = (#replaySlice > 0) and replaySlice[1].pos or (presentPos - ply:GetForward() * 90)
+		local pastStartAng = (#replaySlice > 0) and replaySlice[1].ang or presentAng
+
+		-- Place the player slightly behind/beside their Past Self so they IMMEDIATELY see themselves from the past!
+		local viewOffset = Angle(0, pastStartAng.y, 0):Forward() * -95 + Angle(0, pastStartAng.y, 0):Right() * 35
+		local trSafe = util.TraceHull({
+			start  = pastStartPos + Vector(0, 0, 16),
+			endpos = pastStartPos + viewOffset + Vector(0, 0, 16),
+			mins   = Vector(-16, -16, 0),
+			maxs   = Vector(16, 16, 72),
+			filter = ply,
+			mask   = MASK_PLAYERSOLID_BRUSHONLY
+		})
+		local arrivePos = trSafe.HitPos
+
+		-- Spawn the living Past Self Clone replaying their exact recorded movements!
+		local clone = ents.Create("ent_past_self_clone")
+		if IsValid(clone) then
+			clone:SetPos(pastStartPos)
+			clone:SetAngles(Angle(0, pastStartAng.y, 0))
+			if #replaySlice == 0 then
+				replaySlice[1] = { pos = pastStartPos, ang = pastStartAng, seq = ply:GetSequence(), cycle = 0 }
+			end
+			clone:SetTimelineFrames(replaySlice, ply)
+			clone:Spawn()
+			clone:Activate()
+		end
+
+		ply:SetPos(arrivePos)
+		ply:SetEyeAngles((pastStartPos + Vector(0, 0, 48) - (arrivePos + Vector(0, 0, 60))):Angle())
+		ply:EmitSound("RickTime.Warp")
+		ply:ScreenFade(SCREENFADE.IN, Color(175, 95, 255, 165), 0.55, 0.05)
+
+		local deadline = CurTime() + 35.0
+		RICK_PORTAL.ActiveTimeTravelers[ply] = {
+			inPast        = true,
+			presentPos    = presentPos,
+			presentAng    = presentAng,
+			presentHP     = presentHP,
+			deadline      = deadline,
+			policeSpawned = false,
+			clone         = clone,
+			cops          = {}
+		}
+
+		RICK_PORTAL.SyncWeaponTimeState(ply, wep)
+		ply:ChatPrint(string.format("[ПЛАНШЕТ ВРЕМЕНИ] Вы прыгнули на %d сек. в прошлое! Перед вами — ВЫ ИЗ ПРОШЛОГО! У вас ровно 35 секунд, чтобы вернуться!", secondsBack))
+	end
+
+	function RICK_PORTAL.ReturnToPresentTimeline(ply, wep)
+		if not IsValid(ply) then return end
+		local st = RICK_PORTAL.ActiveTimeTravelers[ply]
+		if not st or not st.inPast then return end
+
+		if st.policeSpawned then
+			ply:ChatPrint("[ПОЛИЦИЯ ВРЕМЕНИ]: Поздно жать кнопки, уебок! Твоё время вышло — ты под арестом!")
+			ply:EmitSound("buttons/button10.wav", 75, 85, 0.8)
+			return
+		end
+
+		ply:SetPos(st.presentPos)
+		ply:SetEyeAngles(st.presentAng)
+		ply:EmitSound("RickTime.Warp")
+		ply:ScreenFade(SCREENFADE.IN, Color(85, 235, 255, 160), 0.50, 0.05)
+		ply:ChatPrint("[ПЛАНШЕТ ВРЕМЕНИ] Вы вовремя вернулись в своё настоящее время! Полиция Времени не заметила пробоя.")
+
+		RICK_PORTAL.ClearPlayerTimeTravelState(ply, false)
+	end
+
+	hook.Add("Think", "RickTime_RecorderAndPoliceDeadline", function()
+		local ct = CurTime()
+
+		-- 1) Record player history when NOT currently inside the past
+		if ct >= NEXT_REC_AT then
+			NEXT_REC_AT = ct + RECORD_INTERVAL
+			for _, ply in ipairs(player.GetAll()) do
+				if IsValid(ply) and ply:Alive() then
+					local st = RICK_PORTAL.ActiveTimeTravelers[ply]
+					if not (st and st.inPast) then
+						local h = RICK_PORTAL.TimeHistory[ply]
+						if not h then
+							h = {}
+							RICK_PORTAL.TimeHistory[ply] = h
+						end
+						h[#h + 1] = {
+							pos   = ply:GetPos(),
+							ang   = ply:EyeAngles(),
+							seq   = ply:GetSequence(),
+							cycle = ply:GetCycle()
+						}
+						if #h > MAX_FRAMES then
+							table.remove(h, 1)
+						end
+					end
+				end
+			end
+		end
+
+		-- 2) Check 35-second Time Travel Deadline -> Spawn 4th-Dimensional Time Police Squad!
+		for ply, st in pairs(RICK_PORTAL.ActiveTimeTravelers) do
+			if not IsValid(ply) or not ply:Alive() then
+				RICK_PORTAL.ClearPlayerTimeTravelState(ply, true)
+			elseif st.inPast and not st.policeSpawned and ct >= st.deadline then
+				st.policeSpawned = true
+				st.cops = {}
+
+				-- Spawn 2 Time Police officers around the player in purple temporal rifts!
+				for i = 1, 2 do
+					local angOff = math.rad(i * 180 - 35)
+					local offset = Vector(math.cos(angOff) * 145, math.sin(angOff) * 145, 12)
+					local trC = util.TraceLine({
+						start  = ply:WorldSpaceCenter(),
+						endpos = ply:GetPos() + offset,
+						filter = ply,
+						mask   = MASK_SOLID_BRUSHONLY
+					})
+					local copPos = trC.Hit and (trC.HitPos - offset:GetNormalized() * 24) or (ply:GetPos() + offset)
+
+					local cop = ents.Create("npc_time_police")
+					if IsValid(cop) then
+						cop:SetPos(copPos)
+						cop:SetAngles((ply:GetPos() - copPos):Angle())
+						cop:SetTargetCriminal(ply)
+						cop:Spawn()
+						cop:Activate()
+						st.cops[#st.cops + 1] = cop
+					end
+				end
+			end
+		end
+	end)
+
+	hook.Add("PlayerDeath", "RickTime_CleanupOnDeath", function(ply)
+		RICK_PORTAL.ClearPlayerTimeTravelState(ply, true)
 	end)
 else
 	CreateClientConVar("cl_rickportal_dlight", "1", true, false, "Enable dynamic lighting on portals, portal gun and Omega Device")
@@ -205,14 +409,13 @@ else
 		local count = net.ReadUInt(8)
 		RICK_PORTAL.ErasedSubspecies = {}
 		for i = 1, count do
-			local sig = net.ReadString()
+			local sig  = net.ReadString()
 			local name = net.ReadString()
 			RICK_PORTAL.ErasedSubspecies[sig] = { name = name }
 		end
 	end)
 
-	-- Client-side blue-cyan lightning disintegration burst whenever an entity is erased!
-	local matParticleGlow = CreateMaterial("RickOmega_ParticleGlow_v1", "UnlitGeneric", {
+	local matParticleGlow = CreateMaterial("RickOmega_ParticleGlow_v2", "UnlitGeneric", {
 		["$basetexture"] = "sprites/light_glow02",
 		["$additive"]    = "1",
 		["$vertexcolor"] = "1",
@@ -226,18 +429,18 @@ else
 		local rad = net.ReadFloat()
 
 		table.insert(RICK_PORTAL.ActiveVaporizeArcs, {
-			pos = pos,
-			rad = rad,
+			pos   = pos,
+			rad   = rad,
 			birth = CurTime(),
-			dur = 0.75,
-			seed = math.Rand(0, 100)
+			dur   = 0.75,
+			seed  = math.Rand(0, 100)
 		})
 
 		local em = ParticleEmitter(pos, false)
 		if IsValid(em) then
 			for i = 1, 32 do
 				local dir = VectorRand():GetNormalized()
-				local p = em:Add(matParticleGlow, pos + dir * math.Rand(0, rad * 0.65))
+				local p   = em:Add(matParticleGlow, pos + dir * math.Rand(0, rad * 0.65))
 				if p then
 					p:SetVelocity(dir * math.Rand(60, 240) + Vector(0, 0, math.Rand(30, 110)))
 					p:SetDieTime(math.Rand(0.45, 0.95))
@@ -245,30 +448,11 @@ else
 					p:SetEndAlpha(0)
 					p:SetStartSize(math.Rand(8, 22))
 					p:SetEndSize(0)
-					if i % 3 == 0 then
-						p:SetColor(225, 250, 255)
-					else
-						p:SetColor(55, 195, 255)
-					end
+					if i % 3 == 0 then p:SetColor(225, 250, 255) else p:SetColor(55, 195, 255) end
 					p:SetAirResistance(85)
 				end
 			end
 			em:Finish()
-		end
-
-		local dlightConVar = GetConVar("cl_rickportal_dlight")
-		if not dlightConVar or dlightConVar:GetBool() then
-			local dl = DynamicLight(math.random(20000, 29999))
-			if dl then
-				dl.pos = pos
-				dl.r = 65
-				dl.g = 205
-				dl.b = 255
-				dl.brightness = 4.5
-				dl.Decay = 1200
-				dl.Size = math.max(240, rad * 4)
-				dl.DieTime = CurTime() + 0.65
-			end
 		end
 	end)
 
@@ -283,7 +467,7 @@ else
 		local ct = CurTime()
 		for i = #list, 1, -1 do
 			local fx = list[i]
-			local t = (ct - fx.birth) / fx.dur
+			local t  = (ct - fx.birth) / fx.dur
 			if t >= 1 then
 				table.remove(list, i)
 			else
@@ -292,72 +476,29 @@ else
 				render.DrawSprite(fx.pos, fx.rad * 3.8 * inv, fx.rad * 3.8 * inv, Color(85, 220, 255, 235 * inv))
 				render.DrawSprite(fx.pos, fx.rad * 1.9 * inv, fx.rad * 1.9 * inv, Color(235, 252, 255, 255 * inv))
 
-				-- Jagged blue-white Omega energy bolts tearing the target out of all timelines
 				render.SetMaterial(matLaser)
 				for b = 1, 7 do
 					local a1 = b * 0.9 + ct * 14 + fx.seed
 					local dir = Vector(math.cos(a1), math.sin(a1), math.sin(a1 * 1.7)):GetNormalized()
-					local pStart = fx.pos
-					local pMid   = fx.pos + dir * (fx.rad * (0.6 + t * 0.9)) + VectorRand() * 8
-					local pEnd   = fx.pos + dir * (fx.rad * (1.3 + t * 1.8))
-					render.DrawBeam(pStart, pMid, 12 * inv, 0, 1, Color(120, 230, 255, 240 * inv))
-					render.DrawBeam(pMid, pEnd, 7 * inv, 0, 1, Color(230, 250, 255, 200 * inv))
+					local pMid = fx.pos + dir * (fx.rad * (0.6 + t * 0.9)) + VectorRand() * 8
+					local pEnd = fx.pos + dir * (fx.rad * (1.3 + t * 1.8))
+					render.DrawBeam(fx.pos, pMid, 12 * inv, 0, 1, Color(120, 230, 255, 240 * inv))
+					render.DrawBeam(pMid,   pEnd, 7 * inv,  0, 1, Color(230, 250, 255, 200 * inv))
 				end
 			end
 		end
 	end)
 end
 
-sound.Add({
-	name = "RickPortal.Shoot",
-	channel = CHAN_WEAPON,
-	volume = 0.9,
-	level = 75,
-	pitch = { 96, 105 },
-	sound = "rick_portal/portal_shoot.wav"
-})
+-- Sound Definitions
+sound.Add({ name = "RickPortal.Shoot", channel = CHAN_WEAPON, volume = 0.9,  level = 75,  pitch = { 96, 105 }, sound = "rick_portal/portal_shoot.wav" })
+sound.Add({ name = "RickPortal.Open",  channel = CHAN_STATIC, volume = 0.95, level = 80,  pitch = { 95, 104 }, sound = "rick_portal/portal_open.wav" })
+sound.Add({ name = "RickPortal.Enter", channel = CHAN_ITEM,   volume = 0.95, level = 80,  pitch = { 96, 106 }, sound = "rick_portal/portal_enter.wav" })
+sound.Add({ name = "RickPortal.Close", channel = CHAN_STATIC, volume = 0.85, level = 75,  pitch = { 95, 105 }, sound = "rick_portal/portal_close.wav" })
 
-sound.Add({
-	name = "RickPortal.Open",
-	channel = CHAN_STATIC,
-	volume = 0.95,
-	level = 80,
-	pitch = { 95, 104 },
-	sound = "rick_portal/portal_open.wav"
-})
+sound.Add({ name = "RickOmega.Charge", channel = CHAN_WEAPON, volume = 1.0,  level = 90,  pitch = { 98, 102 }, sound = "rick_portal/omega_charge.wav" })
+sound.Add({ name = "RickOmega.Erase",  channel = CHAN_STATIC, volume = 1.0,  level = 105, pitch = { 96, 102 }, sound = "rick_portal/omega_erase.wav" })
 
-sound.Add({
-	name = "RickPortal.Enter",
-	channel = CHAN_ITEM,
-	volume = 0.95,
-	level = 80,
-	pitch = { 96, 106 },
-	sound = "rick_portal/portal_enter.wav"
-})
-
-sound.Add({
-	name = "RickPortal.Close",
-	channel = CHAN_STATIC,
-	volume = 0.85,
-	level = 75,
-	pitch = { 95, 105 },
-	sound = "rick_portal/portal_close.wav"
-})
-
-sound.Add({
-	name = "RickOmega.Charge",
-	channel = CHAN_WEAPON,
-	volume = 1.0,
-	level = 90,
-	pitch = { 98, 102 },
-	sound = "rick_portal/omega_charge.wav"
-})
-
-sound.Add({
-	name = "RickOmega.Erase",
-	channel = CHAN_STATIC,
-	volume = 1.0,
-	level = 105,
-	pitch = { 96, 102 },
-	sound = "rick_portal/omega_erase.wav"
-})
+sound.Add({ name = "RickTime.Warp",         channel = CHAN_STATIC, volume = 1.0, level = 85,  pitch = { 98, 102 }, sound = "rick_portal/time_warp.wav" })
+sound.Add({ name = "RickTime.PoliceArrive", channel = CHAN_VOICE,  volume = 1.0, level = 100, pitch = { 95, 104 }, sound = "rick_portal/time_police_arrive.wav" })
+sound.Add({ name = "RickTime.BatonHit",     channel = CHAN_WEAPON, volume = 1.0, level = 85,  pitch = { 95, 106 }, sound = "rick_portal/time_baton_hit.wav" })

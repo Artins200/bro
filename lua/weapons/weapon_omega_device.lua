@@ -1,8 +1,8 @@
 AddCSLuaFile()
 
-SWEP.PrintName          = "The Omega Device"
+SWEP.PrintName          = "The Omega Device (Handheld)"
 SWEP.Author             = "Rick Prime"
-SWEP.Instructions       = "ЛКМ: Навести луч Омега-оружия на цель — СТИРАЕТ ВСЕХ существ этого подвида из всех вселенных навсегда!\nПКМ: Разместить гигантскую установку Омега-устройства в мире\nR (Перезарядка): Восстановить стёртые подвиды (сбросить мультивселенную)"
+SWEP.Instructions       = "ЛКМ по существу: Захватить уменьшенную модель цели в поле Омега-сферы и СТЕРЕТЬ весь её подвид из всех вселенных!\nПКМ: Развернуть большую установку Омега-устройства со стазис-капсулой и встроенным 3D-монитором\nR: Сбросить стёртые подвиды"
 SWEP.Category           = "Rick and Morty"
 
 SWEP.Spawnable          = true
@@ -10,7 +10,7 @@ SWEP.AdminOnly          = false
 
 SWEP.ViewModel          = "models/weapons/c_pistol.mdl"
 SWEP.WorldModel         = "models/weapons/w_pistol.mdl"
-SWEP.ViewModelFOV       = 68
+SWEP.ViewModelFOV       = 66
 SWEP.UseHands           = true
 
 SWEP.Slot               = 4
@@ -40,10 +40,10 @@ function SWEP:SetupDataTables()
 	self:NetworkVar("Float",  1, "LastBlastTime")
 	self:NetworkVar("Bool",   0, "IsCharging")
 	self:NetworkVar("Entity", 0, "LockedTarget")
-	self:NetworkVar("Vector", 0, "LastBlastPos")
+	self:NetworkVar("String", 0, "LockedModel")
 end
 
-local CHARGE_TIME = 1.05
+local CHARGE_TIME = 1.25
 
 local ZeroVec = Vector(0.0001, 0.0001, 0.0001)
 local PistolWeaponBonesToHide = {
@@ -54,7 +54,6 @@ local PistolWeaponBonesToHide = {
 	"ValveBiped.muzzle"
 }
 
--- Open-palm telekinetic/gauntlet hand pose cradling the floating rotating Omega Core!
 local OmegaHandPose = {
 	["ValveBiped.Bip01_L_Clavicle"]  = { pos = Vector(-20, -16, -32), angle = Angle(-30, -40, 0) },
 	["ValveBiped.Bip01_L_UpperArm"]  = { pos = Vector(0, 0, -24),     angle = Angle(0, -55, 0) },
@@ -87,10 +86,15 @@ end
 function SWEP:Holster()
 	if CLIENT then
 		self:ResetViewModelBones()
+		if IsValid(self.MiniHoloEnt) then
+			self.MiniHoloEnt:Remove()
+			self.MiniHoloEnt = nil
+		end
 	end
 	if SERVER then
 		self:SetIsCharging(false)
 		self:SetLockedTarget(NULL)
+		self:SetLockedModel("")
 	end
 	return true
 end
@@ -98,13 +102,17 @@ end
 function SWEP:OnRemove()
 	if CLIENT then
 		self:ResetViewModelBones()
+		if IsValid(self.MiniHoloEnt) then
+			self.MiniHoloEnt:Remove()
+			self.MiniHoloEnt = nil
+		end
 	end
 end
 
 if SERVER then
 	function SWEP:FindAimTarget()
 		local owner = self:GetOwner()
-		if not IsValid(owner) then return nil, nil end
+		if not IsValid(owner) then return nil end
 
 		local eyePos = owner:GetShootPos()
 		local aimDir = owner:GetAimVector()
@@ -119,21 +127,19 @@ if SERVER then
 		})
 
 		if IsValid(tr.Entity) and not tr.Entity:IsWorld() then
-			local sig = RICK_PORTAL.GetSubspeciesSignature(tr.Entity)
-			if sig then
-				return tr.Entity, tr.HitPos
+			if tr.Entity:GetClass() == "npc_time_police" then
+				return tr.Entity, true
 			end
+			local sig = RICK_PORTAL.GetSubspeciesSignature(tr.Entity)
+			if sig then return tr.Entity, false end
 		end
 
-		-- Fallback cone search near crosshair so locking onto moving NPCs is effortless!
 		local bestEnt, bestDot = nil, 0.965
 		for _, ent in ipairs(ents.GetAll()) do
-			if IsValid(ent) and ent ~= owner and (ent:IsNPC() or ent:IsNextBot() or ent:IsPlayer() or string.StartWith(ent:GetClass(), "prop_")) then
-				local sig = RICK_PORTAL.GetSubspeciesSignature(ent)
-				if sig then
+			if IsValid(ent) and ent ~= owner then
+				if ent:GetClass() == "npc_time_police" or ent:IsNPC() or ent:IsNextBot() or ent:IsPlayer() or string.StartWith(ent:GetClass(), "prop_") then
 					local dir = (ent:WorldSpaceCenter() - eyePos)
-					local dist = dir:Length()
-					if dist < 3500 then
+					if dir:Length() < 3500 then
 						dir:Normalize()
 						local d = dir:Dot(aimDir)
 						if d > bestDot then
@@ -146,10 +152,9 @@ if SERVER then
 		end
 
 		if IsValid(bestEnt) then
-			return bestEnt, bestEnt:WorldSpaceCenter()
+			return bestEnt, (bestEnt:GetClass() == "npc_time_police")
 		end
-
-		return nil, tr.HitPos
+		return nil, false
 	end
 
 	function SWEP:Think()
@@ -161,59 +166,59 @@ if SERVER then
 
 			local owner  = self:GetOwner()
 			local target = self:GetLockedTarget()
-			if not IsValid(target) then
-				target = self:FindAimTarget()
-			end
 
-			if IsValid(target) then
-				local hitPos = target:WorldSpaceCenter()
-				self:SetLastBlastPos(hitPos)
+			if IsValid(target) and target:GetClass() ~= "npc_time_police" then
 				self:SetLastBlastTime(CurTime())
 				self:EmitSound("RickOmega.Erase")
 
 				local erasedCount, subName = RICK_PORTAL.EraseSubspeciesAcrossMultiverse(target, owner)
 				if IsValid(owner) and subName then
-					owner:ChatPrint(string.format("[OMEGA DEVICE] Подвид «%s» СТЁРТ ИЗ ВСЕХ ВСЕЛЕННЫХ! (Уничтожено объектов: %d, повторное появление заблокировано)", subName, erasedCount))
+					owner:ChatPrint(string.format("[OMEGA DEVICE] Подвид «%s» СТЁРТ ИЗ ВСЕХ ВСЕЛЕННЫХ! (Удалено: %d)", subName, erasedCount))
 					util.ScreenShake(owner:GetPos(), 10, 8, 1.1, 1500)
-				end
-			else
-				if IsValid(owner) then
-					owner:EmitSound("buttons/button10.wav", 70, 90, 0.7)
 				end
 			end
 
 			self:SetLockedTarget(NULL)
+			self:SetLockedModel("")
 		end
 	end
 end
 
 function SWEP:PrimaryAttack()
 	if self:GetIsCharging() then return end
-	self:SetNextPrimaryFire(CurTime() + 1.45)
+	self:SetNextPrimaryFire(CurTime() + 1.55)
 
 	if SERVER then
-		local target = self:FindAimTarget()
+		local target, isTimePolice = self:FindAimTarget()
+		local owner = self:GetOwner()
+
+		if isTimePolice then
+			if IsValid(owner) then
+				owner:EmitSound("buttons/button10.wav", 75, 80, 0.9)
+				owner:ChatPrint("[OMEGA DEVICE] НЕВОЗМОЖНО: Полиция Времени существует вне вселенных и НЕУЯЗВИМА к Омега-оружию!")
+			end
+			return
+		end
+
 		if not IsValid(target) then
-			local owner = self:GetOwner()
 			if IsValid(owner) then
 				owner:EmitSound("buttons/button10.wav", 65, 95, 0.6)
-				owner:ChatPrint("[OMEGA DEVICE] Наведите прицел на существо, NPC, игрока или объект, чтобы стереть его подвид из всех вселенных!")
 			end
 			return
 		end
 
 		self:SetLockedTarget(target)
+		self:SetLockedModel(target:GetModel() or "models/Kleiner.mdl")
 		self:SetChargeStart(CurTime())
 		self:SetIsCharging(true)
 		self:EmitSound("RickOmega.Charge")
 
-		if IsValid(self:GetOwner()) then
-			self:GetOwner():SetAnimation(PLAYER_ATTACK1)
+		if IsValid(owner) then
+			owner:SetAnimation(PLAYER_ATTACK1)
 		end
 	end
 end
 
--- RMB spawns the giant standalone Omega Device chamber in the world!
 function SWEP:SecondaryAttack()
 	self:SetNextSecondaryFire(CurTime() + 1.2)
 	if CLIENT then return end
@@ -223,34 +228,31 @@ function SWEP:SecondaryAttack()
 
 	local tr = util.TraceLine({
 		start  = owner:GetShootPos(),
-		endpos = owner:GetShootPos() + owner:GetAimVector() * 450,
+		endpos = owner:GetShootPos() + owner:GetAimVector() * 260,
 		filter = owner,
 		mask   = MASK_SOLID_BRUSHONLY
 	})
 
-	local spawnPos = tr.HitPos + Vector(0, 0, 95)
-
-	-- Keep max 1 personal deployed Omega Device per player so they don't clutter
 	if IsValid(self.DeployedMachine) then
 		self.DeployedMachine:Remove()
 	end
 
 	local mach = ents.Create("ent_omega_device")
 	if IsValid(mach) then
-		mach:SetPos(spawnPos)
+		mach:SetPos(tr.HitPos)
 		mach:SetAngles(Angle(0, owner:EyeAngles().y + 180, 0))
 		mach:SetOwner(owner)
 		mach:Spawn()
 		mach:Activate()
 		self.DeployedMachine = mach
 
-		undo.Create("Omega Device")
+		undo.Create("Omega Device Chamber")
 			undo.AddEntity(mach)
 			undo.SetPlayer(owner)
 		undo.Finish()
 
 		owner:EmitSound("RickOmega.Charge")
-		owner:ChatPrint("[OMEGA DEVICE] Установка развёрнута! Бросьте в её синее ядро любое существо/предмет или нажмите E рядом с ней.")
+		owner:ChatPrint("[OMEGA DEVICE] Станция развёрнута! Подойдите к её 3D-монитору и нажимайте E прямо по кнопкам на экране.")
 	end
 end
 
@@ -272,7 +274,6 @@ end
 
 if CLIENT then
 	local matLaser = Material("Effects/laser1")
-	local matGlow  = Material("sprites/light_glow02_add")
 
 	function SWEP:ApplyViewModelBones(vm)
 		if not IsValid(vm) or not vm:GetBoneCount() or vm:GetBoneCount() <= 0 then return end
@@ -304,15 +305,15 @@ if CLIENT then
 	function SWEP:CalcViewModelView(vm, oldPos, oldAng, pos, ang)
 		local ct = CurTime()
 		local charge = self:GetIsCharging() and math.Clamp((ct - self:GetChargeStart()) / CHARGE_TIME, 0, 1) or 0
-		local shake = charge * 0.45
+		local shake  = charge * 0.40
 
 		pos = pos
-			+ ang:Forward() * -1.5
-			+ ang:Right()   * (-1.2 + math.sin(ct * 42) * shake)
-			+ ang:Up()      * (1.8  + math.cos(ct * 37) * shake)
+			+ ang:Forward() * 0.2
+			+ ang:Right()   * (0.6 + math.sin(ct * 42) * shake)
+			+ ang:Up()      * (-2.2 + math.cos(ct * 37) * shake)
 
-		ang:RotateAroundAxis(ang:Right(), 4 + math.sin(ct * 1.8) * 0.7)
-		ang:RotateAroundAxis(ang:Up(),    6)
+		ang:RotateAroundAxis(ang:Right(), 2 + math.sin(ct * 1.8) * 0.6)
+		ang:RotateAroundAxis(ang:Up(),    4)
 		return pos, ang
 	end
 
@@ -320,6 +321,7 @@ if CLIENT then
 		self:ApplyViewModelBones(vm)
 	end
 
+	-- Renders the Omega Core AND pulls out a spinning miniature 3D hologram model of the victim right inside the core before erasing it!
 	function SWEP:PostDrawViewModel(vm, wep, ply)
 		if not IsValid(vm) or not RICK_PORTAL or not RICK_PORTAL.OmegaRenderer then return end
 
@@ -334,29 +336,51 @@ if CLIENT then
 			end
 		end
 
-		local ct = CurTime()
+		local ct     = CurTime()
 		local charge = self:GetIsCharging() and math.Clamp((ct - self:GetChargeStart()) / CHARGE_TIME, 0, 1) or 0
 		local burst  = math.Clamp(1.0 - (ct - self:GetLastBlastTime()) * 1.8, 0, 1)
 
-		local hoverZ = math.sin(ct * 3.4) * 0.35
+		local hoverZ = math.sin(ct * 3.4) * 0.30
 		local corePos, coreAng = LocalToWorld(Vector(4.8, -3.2, 2.2 + hoverZ), Angle(0, 0, 0), origin, ang)
 
-		RICK_PORTAL.OmegaRenderer:DrawOmegaCore(corePos, coreAng, 0.25, charge, burst)
+		-- Draw captured miniature 3D model of the creature spinning & shrinking inside the Omega Core!
+		local lockedMdl = self:GetLockedModel()
+		if self:GetIsCharging() and lockedMdl and lockedMdl ~= "" then
+			if not IsValid(self.MiniHoloEnt) or self.MiniHoloEnt:GetModel() ~= lockedMdl then
+				if IsValid(self.MiniHoloEnt) then self.MiniHoloEnt:Remove() end
+				self.MiniHoloEnt = ClientsideModel(lockedMdl, RENDERGROUP_TRANSLUCENT)
+				if IsValid(self.MiniHoloEnt) then
+					self.MiniHoloEnt:SetNoDraw(true)
+				end
+			end
 
-		-- Draw intense locking/erasure beam toward locked target!
+			if IsValid(self.MiniHoloEnt) then
+				local rad = math.max(self.MiniHoloEnt:BoundingRadius(), 12)
+				local fitScale = (4.8 / rad) * (1.0 - charge * 0.72) -- shrinks as Omega energy erases it!
+				self.MiniHoloEnt:SetPos(corePos - Vector(0, 0, 1.8 * fitScale))
+				self.MiniHoloEnt:SetAngles(Angle(0, ct * 240, math.sin(ct * 18) * 15))
+				self.MiniHoloEnt:SetModelScale(fitScale, 0)
+				self.MiniHoloEnt:SetupBones()
+
+				render.SetColorModulation(0.45 + charge * 0.55, 0.90, 1.0)
+				render.SetBlend(0.92)
+				self.MiniHoloEnt:DrawModel()
+				render.SetBlend(1)
+				render.SetColorModulation(1, 1, 1)
+			end
+		elseif IsValid(self.MiniHoloEnt) then
+			self.MiniHoloEnt:Remove()
+			self.MiniHoloEnt = nil
+		end
+
+		RICK_PORTAL.OmegaRenderer:DrawOmegaCore(corePos, coreAng, 0.24, charge, burst)
+
 		local target = self:GetLockedTarget()
 		if self:GetIsCharging() and IsValid(target) then
 			local tPos = target:WorldSpaceCenter()
 			render.SetMaterial(matLaser)
-			render.DrawBeam(corePos, tPos, 6 + charge * 18, 0, 1, Color(85, 215, 255, 235))
-			render.DrawBeam(corePos, tPos, 2 + charge * 8,  0, 1, Color(235, 252, 255, 255))
-		elseif burst > 0.05 then
-			local bPos = self:GetLastBlastPos()
-			if bPos and bPos:LengthSqr() > 1 then
-				render.SetMaterial(matLaser)
-				render.DrawBeam(corePos, bPos, 34 * burst, 0, 1, Color(95, 220, 255, 255 * burst))
-				render.DrawBeam(corePos, bPos, 16 * burst, 0, 1, Color(245, 255, 255, 255 * burst))
-			end
+			render.DrawBeam(corePos, tPos, 5 + charge * 15, 0, 1, Color(85, 215, 255, 235))
+			render.DrawBeam(corePos, tPos, 2 + charge * 6,  0, 1, Color(235, 252, 255, 255))
 		end
 	end
 
@@ -366,7 +390,7 @@ if CLIENT then
 			return
 		end
 
-		local ct = CurTime()
+		local ct     = CurTime()
 		local charge = self:GetIsCharging() and math.Clamp((ct - self:GetChargeStart()) / CHARGE_TIME, 0, 1) or 0
 		local burst  = math.Clamp(1.0 - (ct - self:GetLastBlastTime()) * 1.8, 0, 1)
 		local owner  = self:GetOwner()
@@ -378,18 +402,13 @@ if CLIENT then
 				local mtx = owner:GetBoneMatrix(handBone)
 				if mtx then
 					local corePos, coreAng = LocalToWorld(Vector(5.5, -2.5, 2.0), Angle(0, 0, 0), mtx:GetTranslation(), mtx:GetAngles())
-					RICK_PORTAL.OmegaRenderer:DrawOmegaCore(corePos, coreAng, 0.30, charge, burst)
-
-					if self:GetIsCharging() and IsValid(self:GetLockedTarget()) then
-						render.SetMaterial(matLaser)
-						render.DrawBeam(corePos, self:GetLockedTarget():WorldSpaceCenter(), 10 + charge * 20, 0, 1, Color(95, 220, 255, 245))
-					end
+					RICK_PORTAL.OmegaRenderer:DrawOmegaCore(corePos, coreAng, 0.28, charge, burst)
 					return
 				end
 			end
 		end
 
-		RICK_PORTAL.OmegaRenderer:DrawOmegaCore(self:GetPos() + Vector(0, 0, 10), self:GetAngles(), 0.38, 0, 0)
+		RICK_PORTAL.OmegaRenderer:DrawOmegaCore(self:GetPos() + Vector(0, 0, 10), self:GetAngles(), 0.36, 0, 0)
 	end
 
 	function SWEP:DrawWorldModelTranslucent()
@@ -398,57 +417,13 @@ if CLIENT then
 
 	function SWEP:DoDrawCrosshair(x, y)
 		local charge = self:GetIsCharging() and math.Clamp((CurTime() - self:GetChargeStart()) / CHARGE_TIME, 0, 1) or 0
-		local rad = math.floor(14 - charge * 8)
-		surface.DrawCircle(x, y, rad, 85, 215, 255, 230)
+		surface.DrawCircle(x, y, math.floor(12 - charge * 6), 85, 215, 255, 220)
 		surface.SetDrawColor(230, 250, 255, 255)
 		surface.DrawRect(x - 2, y - 2, 4, 4)
 		return true
 	end
 
 	function SWEP:DrawHUD()
-		local owner = self:GetOwner()
-		if not IsValid(owner) then return end
-
-		-- Show target subspecies scanner & count of permanently erased subspecies
-		local tr = util.TraceLine({
-			start  = owner:EyePos(),
-			endpos = owner:EyePos() + owner:GetAimVector() * 3500,
-			filter = owner,
-			mask   = MASK_SHOT
-		})
-
-		local cx, cy = ScrW() * 0.5, ScrH() * 0.5
-		if IsValid(tr.Entity) and not tr.Entity:IsWorld() then
-			local sig, prettyName = RICK_PORTAL.GetSubspeciesSignature(tr.Entity)
-			if sig then
-				draw.SimpleText("ЦЕЛЬ ОМЕГА-ЛУЧА: " .. tostring(prettyName), "DermaDefaultBold", cx, cy + 28, Color(115, 230, 255, 245), TEXT_ALIGN_CENTER, TEXT_ALIGN_CENTER)
-			end
-		end
-
-		if self:GetIsCharging() then
-			local frac = math.Clamp((CurTime() - self:GetChargeStart()) / CHARGE_TIME, 0, 1)
-			draw.RoundedBox(6, cx - 110, cy + 48, 220, 16, Color(10, 20, 32, 210))
-			draw.RoundedBox(4, cx - 108, cy + 50, math.floor(216 * frac), 12, Color(85, 220, 255, 250))
-			draw.SimpleText("СТИРАНИЕ ИЗ ВСЕХ ВСЕЛЕННЫХ...", "DermaDefaultBold", cx, cy + 74, Color(220, 250, 255, 255), TEXT_ALIGN_CENTER, TEXT_ALIGN_CENTER)
-		end
-
-		-- List of currently erased subspecies in bottom-right corner
-		local erased = RICK_PORTAL.ErasedSubspecies or {}
-		local visibleList = {}
-		for sig, info in pairs(erased) do
-			if not string.StartWith(sig, "ragdoll_mdl:") then
-				visibleList[#visibleList + 1] = info.name or sig
-			end
-		end
-
-		if #visibleList > 0 then
-			local boxH = 34 + math.min(#visibleList, 6) * 18
-			local bx, by = ScrW() - 285, ScrH() - boxH - 22
-			draw.RoundedBox(8, bx, by, 265, boxH, Color(12, 18, 30, 210))
-			draw.SimpleText("СТЁРТО ИЗ ВСЕХ ВСЕЛЕННЫХ (R - сброс):", "DermaDefaultBold", bx + 132, by + 14, Color(95, 215, 255, 255), TEXT_ALIGN_CENTER, TEXT_ALIGN_CENTER)
-			for i = 1, math.min(#visibleList, 6) do
-				draw.SimpleText("✕ " .. visibleList[i], "DermaDefault", bx + 14, by + 18 + i * 18, Color(225, 245, 255, 230), TEXT_ALIGN_LEFT, TEXT_ALIGN_CENTER)
-			end
-		end
+		-- Clean screen (no popup GUI!)
 	end
 end
