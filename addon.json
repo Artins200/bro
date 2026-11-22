@@ -1,7 +1,7 @@
 {
-	"title": "Rick and Morty Portal Gun",
+	"title": "Rick and Morty Portal Gun & Flying Saucer",
 	"type": "weapon",
-	"tags": [ "fun", "cartoon", "scifi" ],
+	"tags": [ "fun", "cartoon", "scifi", "vehicle" ],
 	"ignore": [
 		".git/*",
 		"*.md",
