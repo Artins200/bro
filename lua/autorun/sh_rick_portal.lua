@@ -57,17 +57,15 @@ if SERVER then
 	util.AddNetworkString("RickOmega_VaporizeFX")
 	util.AddNetworkString("RickTime_RiftFX")
 
-	-- Resources (only Omega Chamber station + Portal Gun + Chrono Gun + Time Police!)
+	-- Resources for the portal gun, saucer, Omega station and supporting entities.
 	resource.AddSingleFile("materials/rick_portal/portal_swirl.png")
 	resource.AddSingleFile("materials/rick_portal/portal_inner_swirl.png")
 	resource.AddSingleFile("materials/rick_portal/liquid_blob.png")
 	resource.AddSingleFile("materials/entities/weapon_rick_portalgun.png")
 	resource.AddSingleFile("materials/entities/ent_rick_portal.png")
 	resource.AddSingleFile("materials/entities/ent_omega_device.png")
-	resource.AddSingleFile("materials/entities/weapon_chrono_gun.png")
 	resource.AddSingleFile("materials/entities/npc_time_police.png")
 	resource.AddSingleFile("materials/vgui/entities/weapon_rick_portalgun.png")
-	resource.AddSingleFile("materials/vgui/entities/weapon_chrono_gun.png")
 
 	resource.AddSingleFile("sound/rick_portal/portal_shoot.wav")
 	resource.AddSingleFile("sound/rick_portal/portal_open.wav")
@@ -240,21 +238,6 @@ if SERVER then
 		end
 	end)
 
-	function RICK_PORTAL.SyncWeaponTimeState(ply, wep)
-		if not IsValid(ply) then return end
-		local st  = RICK_PORTAL.ActiveTimeTravelers[ply]
-		local gun = IsValid(wep) and wep or ply:GetWeapon("weapon_chrono_gun")
-		if IsValid(gun) and gun:GetClass() == "weapon_chrono_gun" then
-			if st and st.inPast then
-				gun:SetInPast(true)
-				gun:SetPastDeadline(st.deadline)
-			else
-				gun:SetInPast(false)
-				gun:SetPastDeadline(0)
-			end
-		end
-	end
-
 	local function BroadcastTimeRift(pos, isReturn)
 		net.Start("RickTime_RiftFX")
 			net.WriteVector(pos)
@@ -319,7 +302,6 @@ if SERVER then
 		end
 
 		RICK_PORTAL.ActiveTimeTravelers[ply] = nil
-		RICK_PORTAL.SyncWeaponTimeState(ply)
 	end
 
 	function RICK_PORTAL.ForceReturnAfterSentence(ply)
@@ -461,8 +443,7 @@ if SERVER then
 			cops          = {}
 		}
 
-		RICK_PORTAL.SyncWeaponTimeState(ply, wep)
-		ply:ChatPrint(string.format("[ПУШКА ВРЕМЕНИ] Откат на %d сек. назад! Убитых NPC воскрешено в прошлом: %d — смотрите, как вы с ними сражаетесь! (35 сек. до Полиции Времени)", secondsBack, revivedCount))
+		ply:ChatPrint(string.format("[ВРЕМЕННАЯ ЛИНИЯ] Откат на %d сек. назад. Убитых NPC воскрешено: %d.", secondsBack, revivedCount))
 	end
 
 	function RICK_PORTAL.ReturnToPresentTimeline(ply, wep)
