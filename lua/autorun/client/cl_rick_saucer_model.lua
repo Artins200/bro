@@ -1,5 +1,5 @@
--- Rick's Flying Saucer: a lightweight, procedural clientside model.
--- The glass canopy is deliberately translucent so the seated pilot remains visible.
+-- Clean, smooth clientside model for Rick's flying saucer.
+-- A transparent canopy keeps the actual seated player visible.
 
 if SERVER then
 	AddCSLuaFile()
@@ -12,40 +12,40 @@ RICK_PORTAL.SaucerRenderer = RICK_PORTAL.SaucerRenderer or {}
 local Renderer = RICK_PORTAL.SaucerRenderer
 Renderer.Meshes = Renderer.Meshes or {}
 
-local matHull = CreateMaterial("RickSaucer_Hull_v1", "VertexLitGeneric", {
+local matHull = CreateMaterial("RickSaucer_Hull_v2", "VertexLitGeneric", {
 	["$basetexture"]        = "models/debug/debugwhite",
 	["$model"]              = "1",
 	["$vertexcolor"]        = "1",
 	["$halflambert"]        = "1",
 	["$phong"]              = "1",
-	["$phongboost"]         = "1.15",
-	["$phongexponent"]      = "34",
-	["$phongfresnelranges"] = "[0.2 0.55 1]",
+	["$phongboost"]         = "1.1",
+	["$phongexponent"]      = "38",
+	["$phongfresnelranges"] = "[0.18 0.5 1]",
 	["$nocull"]             = "1"
 })
 
-local matDarkMetal = CreateMaterial("RickSaucer_DarkMetal_v1", "VertexLitGeneric", {
-	["$basetexture"] = "models/debug/debugwhite",
-	["$model"]       = "1",
-	["$vertexcolor"] = "1",
-	["$halflambert"] = "1",
-	["$phong"]       = "1",
-	["$phongboost"]  = "0.8",
-	["$phongexponent"] = "24",
-	["$nocull"]      = "1"
+local matDarkMetal = CreateMaterial("RickSaucer_DarkMetal_v2", "VertexLitGeneric", {
+	["$basetexture"]  = "models/debug/debugwhite",
+	["$model"]        = "1",
+	["$vertexcolor"]  = "1",
+	["$halflambert"]  = "1",
+	["$phong"]        = "1",
+	["$phongboost"]   = "0.85",
+	["$phongexponent"] = "28",
+	["$nocull"]       = "1"
 })
 
-local matGlass = CreateMaterial("RickSaucer_Glass_v1", "VertexLitGeneric", {
-	["$basetexture"] = "models/debug/debugwhite",
-	["$model"]       = "1",
-	["$vertexcolor"] = "1",
-	["$vertexalpha"] = "1",
-	["$translucent"] = "1",
-	["$halflambert"] = "1",
-	["$phong"]       = "1",
-	["$phongboost"]  = "0.55",
-	["$phongexponent"] = "48",
-	["$nocull"]      = "1"
+local matGlass = CreateMaterial("RickSaucer_Glass_v2", "VertexLitGeneric", {
+	["$basetexture"]  = "models/debug/debugwhite",
+	["$model"]        = "1",
+	["$vertexcolor"]  = "1",
+	["$vertexalpha"]  = "1",
+	["$translucent"]  = "1",
+	["$halflambert"]  = "1",
+	["$phong"]        = "1",
+	["$phongboost"]   = "0.4",
+	["$phongexponent"] = "52",
+	["$nocull"]       = "1"
 })
 
 local matGlow = Material("sprites/light_glow02_add")
@@ -62,126 +62,15 @@ local function AddQuad(tris, p1, p2, p3, p4, n1, n2, n3, n4)
 	tris[#tris + 1] = { pos = p1, normal = n1, u = 0, v = 0 }
 	tris[#tris + 1] = { pos = p2, normal = n2, u = 1, v = 0 }
 	tris[#tris + 1] = { pos = p3, normal = n3, u = 1, v = 1 }
-
 	tris[#tris + 1] = { pos = p1, normal = n1, u = 0, v = 0 }
 	tris[#tris + 1] = { pos = p3, normal = n3, u = 1, v = 1 }
 	tris[#tris + 1] = { pos = p4, normal = n4, u = 0, v = 1 }
 end
 
-local function BuildSaucerHull()
-	local tris = {}
-	local segments = 64
-	local profile = {
-		{ 0.00, 17.0 },
-		{ 0.26, 18.0 },
-		{ 0.48, 17.0 },
-		{ 0.68, 14.0 },
-		{ 0.86,  8.5 },
-		{ 0.96,  3.5 },
-		{ 1.00,  0.0 },
-		{ 0.95, -4.0 },
-		{ 0.80, -9.0 },
-		{ 0.57, -13.5 },
-		{ 0.30, -16.5 },
-		{ 0.00, -17.0 }
-	}
-
-	local function Point(radius, z, theta)
-		return Vector(math.cos(theta) * radius * 100, math.sin(theta) * radius * 91, z)
-	end
-
-	local function Normal(profileIndex, theta)
-		local radial, vertical
-		if profileIndex <= 3 then
-			radial, vertical = 0.32, 0.95
-		elseif profileIndex <= 5 then
-			radial, vertical = 0.78, 0.62
-		elseif profileIndex == 6 or profileIndex == 7 then
-			radial, vertical = 1.0, 0.0
-		else
-			radial, vertical = 0.78, -0.62
-		end
-		return Vector(math.cos(theta) * radial, math.sin(theta) * radial, vertical):GetNormalized()
-	end
-
-	for ring = 1, #profile - 1 do
-		local r1, z1 = profile[ring][1], profile[ring][2]
-		local r2, z2 = profile[ring + 1][1], profile[ring + 1][2]
-
-		for i = 0, segments - 1 do
-			local a1 = (i / segments) * math.pi * 2
-			local a2 = ((i + 1) / segments) * math.pi * 2
-			local n11 = Normal(ring, a1)
-			local n12 = Normal(ring, a2)
-			local n21 = Normal(ring + 1, a1)
-			local n22 = Normal(ring + 1, a2)
-
-			if r1 == 0 then
-				local center = Vector(0, 0, z1)
-				AddTriangle(tris, center, Point(r2, z2, a1), Point(r2, z2, a2), Vector(0, 0, 1), n21, n22)
-			elseif r2 == 0 then
-				local center = Vector(0, 0, z2)
-				AddTriangle(tris, Point(r1, z1, a1), center, Point(r1, z1, a2), n11, Vector(0, 0, -1), n12)
-			else
-				AddQuad(
-					tris,
-					Point(r1, z1, a1), Point(r2, z2, a1),
-					Point(r2, z2, a2), Point(r1, z1, a2),
-					n11, n21, n22, n12
-				)
-			end
-		end
-	end
-
-	local model = Mesh()
-	model:BuildFromTriangles(tris)
-	return model
-end
-
-local function BuildHemisphere(radiusX, radiusY, height, segments, rings)
-	local tris = {}
-	segments = segments or 48
-	rings = rings or 18
-
-	local function Point(phi, theta)
-		local c = math.cos(phi)
-		return Vector(radiusX * c * math.cos(theta), radiusY * c * math.sin(theta), height * math.sin(phi))
-	end
-
-	local function Normal(phi, theta)
-		local p = Point(phi, theta)
-		return Vector(p.x / (radiusX * radiusX), p.y / (radiusY * radiusY), p.z / (height * height)):GetNormalized()
-	end
-
-	for ring = 0, rings - 1 do
-		local phi1 = (ring / rings) * (math.pi * 0.5)
-		local phi2 = ((ring + 1) / rings) * (math.pi * 0.5)
-		for i = 0, segments - 1 do
-			local a1 = (i / segments) * math.pi * 2
-			local a2 = ((i + 1) / segments) * math.pi * 2
-			local p11, p12 = Point(phi1, a1), Point(phi1, a2)
-			local p21, p22 = Point(phi2, a1), Point(phi2, a2)
-			local n11, n12 = Normal(phi1, a1), Normal(phi1, a2)
-			local n21, n22 = Normal(phi2, a1), Normal(phi2, a2)
-
-			if ring == rings - 1 then
-				local apex = Vector(0, 0, height)
-				AddTriangle(tris, p11, p12, apex, n11, n12, Vector(0, 0, 1))
-			else
-				AddQuad(tris, p11, p12, p22, p21, n11, n12, n22, n21)
-			end
-		end
-	end
-
-	local model = Mesh()
-	model:BuildFromTriangles(tris)
-	return model
-end
-
 local function BuildEllipsoid(radiusX, radiusY, radiusZ, segments, rings)
 	local tris = {}
-	segments = segments or 24
-	rings = rings or 12
+	segments = segments or 48
+	rings = rings or 20
 
 	local function Point(latitude, theta)
 		local c = math.cos(latitude)
@@ -205,11 +94,48 @@ local function BuildEllipsoid(radiusX, radiusY, radiusZ, segments, rings)
 			local n21, n22 = Normal(lat2, a1), Normal(lat2, a2)
 
 			if ring == 0 then
-				local pole = Vector(0, 0, -radiusZ)
-				AddTriangle(tris, pole, p22, p21, Vector(0, 0, -1), n22, n21)
+				AddTriangle(tris, Vector(0, 0, -radiusZ), p22, p21, Vector(0, 0, -1), n22, n21)
 			elseif ring == rings - 1 then
-				local pole = Vector(0, 0, radiusZ)
-				AddTriangle(tris, p11, p12, pole, n11, n12, Vector(0, 0, 1))
+				AddTriangle(tris, p11, p12, Vector(0, 0, radiusZ), n11, n12, Vector(0, 0, 1))
+			else
+				AddQuad(tris, p11, p12, p22, p21, n11, n12, n22, n21)
+			end
+		end
+	end
+
+	local model = Mesh()
+	model:BuildFromTriangles(tris)
+	return model
+end
+
+local function BuildHemisphere(radiusX, radiusY, height, segments, rings)
+	local tris = {}
+	segments = segments or 56
+	rings = rings or 22
+
+	local function Point(phi, theta)
+		local c = math.cos(phi)
+		return Vector(radiusX * c * math.cos(theta), radiusY * c * math.sin(theta), height * math.sin(phi))
+	end
+
+	local function Normal(phi, theta)
+		local p = Point(phi, theta)
+		return Vector(p.x / (radiusX * radiusX), p.y / (radiusY * radiusY), p.z / (height * height)):GetNormalized()
+	end
+
+	for ring = 0, rings - 1 do
+		local phi1 = (ring / rings) * (math.pi * 0.5)
+		local phi2 = ((ring + 1) / rings) * (math.pi * 0.5)
+		for i = 0, segments - 1 do
+			local a1 = (i / segments) * math.pi * 2
+			local a2 = ((i + 1) / segments) * math.pi * 2
+			local p11, p12 = Point(phi1, a1), Point(phi1, a2)
+			local p21, p22 = Point(phi2, a1), Point(phi2, a2)
+			local n11, n12 = Normal(phi1, a1), Normal(phi1, a2)
+			local n21, n22 = Normal(phi2, a1), Normal(phi2, a2)
+
+			if ring == rings - 1 then
+				AddTriangle(tris, p11, p12, Vector(0, 0, height), n11, n12, Vector(0, 0, 1))
 			else
 				AddQuad(tris, p11, p12, p22, p21, n11, n12, n22, n21)
 			end
@@ -224,7 +150,7 @@ end
 local function BuildTorus(majorRadius, tubeRadius, tubeHeight, majorSegments, tubeSegments)
 	local tris = {}
 	majorSegments = majorSegments or 64
-	tubeSegments = tubeSegments or 12
+	tubeSegments = tubeSegments or 14
 
 	local function Point(majorAngle, tubeAngle)
 		local ring = majorRadius + math.cos(tubeAngle) * tubeRadius
@@ -261,21 +187,28 @@ end
 function Renderer:EnsureMeshes()
 	if self.Meshes.Ready then return end
 
-	self.Meshes.Hull          = BuildSaucerHull()
-	self.Meshes.OuterRim      = BuildTorus(96, 3.3, 2.4, 72, 12)
-	self.Meshes.LowerRim      = BuildTorus(75, 4.0, 3.1, 64, 12)
-	self.Meshes.EngineRing    = BuildTorus(38, 3.2, 2.3, 56, 12)
-	self.Meshes.CanopyCollar  = BuildTorus(45, 2.7, 2.4, 56, 12)
-	self.Meshes.GlassDome     = BuildHemisphere(43, 41, 47, 48, 18)
-	self.Meshes.EngineCore    = BuildEllipsoid(28, 28, 6, 28, 14)
-	self.Meshes.ThrusterPod   = BuildEllipsoid(10, 10, 4.5, 20, 10)
+	-- Smooth, shallow metal saucer with a domed cockpit, rather than a stepped
+	-- low-poly shell. All dimensions are local Source units; +X is the nose.
+	self.Meshes.MainHull      = BuildEllipsoid(101, 91, 17.5, 64, 24)
+	self.Meshes.BottomHull    = BuildEllipsoid(82, 74, 12, 64, 22)
+	self.Meshes.WingPanel     = BuildEllipsoid(29, 12, 3.3, 32, 14)
+	self.Meshes.SeatCushion   = BuildEllipsoid(16, 18, 4, 28, 14)
+	self.Meshes.SeatBack      = BuildEllipsoid(6, 17, 17, 24, 14)
+	self.Meshes.Dashboard     = BuildEllipsoid(13, 22, 4.5, 28, 14)
+	self.Meshes.EngineCore    = BuildEllipsoid(27, 27, 5.5, 32, 16)
+	self.Meshes.ThrusterPod   = BuildEllipsoid(11, 10, 4.5, 24, 12)
+	self.Meshes.OuterRim      = BuildTorus(96, 3.1, 2.6, 72, 14)
+	self.Meshes.LowerRim      = BuildTorus(76, 3.4, 2.8, 64, 14)
+	self.Meshes.CanopyCollar  = BuildTorus(44, 2.8, 2.2, 64, 14)
+	self.Meshes.EngineRing    = BuildTorus(36, 3.0, 2.4, 56, 14)
+	self.Meshes.GlassDome     = BuildHemisphere(42.5, 41, 45, 56, 22)
 	self.Meshes.Ready = true
 end
 
-local function DrawMeshPart(model, ent, localPos, localAng, scale, material, color, alpha)
+local function DrawMeshPart(model, ent, localPos, scale, material, color, alpha)
 	if not model then return end
 
-	local worldPos, worldAng = LocalToWorld(localPos or vector_origin, localAng or zeroAng, ent:GetPos(), ent:GetAngles())
+	local worldPos, worldAng = LocalToWorld(localPos or vector_origin, zeroAng, ent:GetPos(), ent:GetAngles())
 	local matrix = Matrix()
 	matrix:SetTranslation(worldPos)
 	matrix:SetAngles(worldAng)
@@ -291,109 +224,112 @@ local function DrawMeshPart(model, ent, localPos, localAng, scale, material, col
 	render.SetColorModulation(1, 1, 1)
 end
 
-local function DrawLocalBox(ent, pos, ang, mins, maxs, color)
-	local worldPos, worldAng = LocalToWorld(pos, ang or zeroAng, ent:GetPos(), ent:GetAngles())
-	render.DrawBox(worldPos, worldAng, mins, maxs, color)
+local function WorldPos(ent, localPos)
+	local pos = LocalToWorld(localPos, zeroAng, ent:GetPos(), ent:GetAngles())
+	return pos
 end
 
-local function ToWorld(ent, localPos)
-	return LocalToWorld(localPos, zeroAng, ent:GetPos(), ent:GetAngles())
-end
-
-local function DrawPanelSeams(ent)
-	for i = 0, 11 do
-		local theta = (i / 12) * math.pi * 2
-		local startLocal = Vector(math.cos(theta) * 49, math.sin(theta) * 45, 16.2)
-		local endLocal   = Vector(math.cos(theta) * 88, math.sin(theta) * 80, 7.1)
-		local startPos = ToWorld(ent, startLocal)
-		local endPos = ToWorld(ent, endLocal)
-		render.DrawLine(startPos, endPos, Color(76, 86, 89, 210), false)
+local function DrawSeams(ent)
+	for i = 0, 9 do
+		local theta = (i / 10) * math.pi * 2
+		local function SurfacePoint(radius)
+			local z = 17.5 * math.sqrt(math.max(0, 1 - radius * radius)) + 0.3
+			return Vector(math.cos(theta) * radius * 101, math.sin(theta) * radius * 91, z)
+		end
+		render.DrawLine(WorldPos(ent, SurfacePoint(0.52)), WorldPos(ent, SurfacePoint(0.93)), Color(81, 91, 94, 190), false)
 	end
+end
+
+local function DrawPilotInterior(ent)
+	-- Rounded cushions and a compact console. Their upper halves sit above the
+	-- hull so they read through the transparent canopy without cluttering it.
+	DrawMeshPart(Renderer.Meshes.SeatCushion, ent, Vector(-13, 0, 19), Vector(1, 1, 1), matDarkMetal, Color(36, 48, 53), 255)
+	DrawMeshPart(Renderer.Meshes.SeatBack, ent, Vector(-25, 0, 25), Vector(1, 1, 1), matDarkMetal, Color(48, 61, 65), 255)
+	DrawMeshPart(Renderer.Meshes.Dashboard, ent, Vector(29, 0, 20), Vector(1, 1, 1), matDarkMetal, Color(40, 54, 58), 255)
+	DrawMeshPart(Renderer.Meshes.Dashboard, ent, Vector(32, 0, 23), Vector(0.62, 0.76, 0.28), matHull, Color(68, 220, 193), 255)
 end
 
 function Renderer:DrawOpaque(ent)
 	self:EnsureMeshes()
 
-	DrawMeshPart(self.Meshes.Hull, ent, vector_origin, zeroAng, Vector(1, 1, 1), matHull, Color(157, 166, 170), 255)
-	DrawMeshPart(self.Meshes.OuterRim, ent, Vector(0, 0, 1), zeroAng, Vector(1, 1, 1), matHull, Color(215, 216, 209), 255)
-	DrawMeshPart(self.Meshes.LowerRim, ent, Vector(0, 0, -8), zeroAng, Vector(1, 1, 1), matDarkMetal, Color(61, 69, 72), 255)
-	DrawMeshPart(self.Meshes.EngineCore, ent, Vector(0, 0, -13), zeroAng, Vector(1, 1, 0.75), matDarkMetal, Color(43, 53, 58), 255)
-	DrawMeshPart(self.Meshes.EngineRing, ent, Vector(0, 0, -14), zeroAng, Vector(1, 1, 1), matHull, Color(127, 150, 154), 255)
-	DrawMeshPart(self.Meshes.CanopyCollar, ent, Vector(0, 0, 15), zeroAng, Vector(1, 1, 1), matHull, Color(194, 203, 198), 255)
+	DrawMeshPart(self.Meshes.MainHull, ent, vector_origin, Vector(1, 1, 1), matHull, Color(164, 171, 173), 255)
+	DrawMeshPart(self.Meshes.BottomHull, ent, Vector(0, 0, -8.5), Vector(1, 1, 1), matDarkMetal, Color(69, 78, 81), 255)
+	DrawMeshPart(self.Meshes.OuterRim, ent, Vector(0, 0, 0), Vector(1, 1, 1), matHull, Color(222, 215, 187), 255)
+	DrawMeshPart(self.Meshes.LowerRim, ent, Vector(0, 0, -11), Vector(1, 1, 1), matDarkMetal, Color(57, 65, 69), 255)
+	DrawMeshPart(self.Meshes.CanopyCollar, ent, Vector(0, 0, 15.2), Vector(1, 1, 1), matHull, Color(211, 215, 203), 255)
+	DrawMeshPart(self.Meshes.EngineCore, ent, Vector(0, 0, -18.5), Vector(1, 1, 0.76), matDarkMetal, Color(42, 51, 55), 255)
+	DrawMeshPart(self.Meshes.EngineRing, ent, Vector(0, 0, -15.5), Vector(1, 1, 1), matHull, Color(131, 151, 153), 255)
 
-	-- Tiny, swept engine housings on the underside make the ship silhouette read
-	-- clearly from below, while the centre remains open for the blue hover glow.
-	for i = 0, 3 do
-		local angle = math.rad(45 + i * 90)
-		local x = math.cos(angle) * 55
-		local y = math.sin(angle) * 51
-		DrawMeshPart(self.Meshes.ThrusterPod, ent, Vector(x, y, -11), zeroAng, Vector(1.35, 1.15, 0.72), matDarkMetal, Color(72, 82, 86), 255)
+	-- A pair of tapered side fins echo the wing-like ends of Rick's ship.
+	for side = -1, 1, 2 do
+		DrawMeshPart(self.Meshes.WingPanel, ent, Vector(34, side * 65, 11.5), Vector(1.22, 1.05, 0.48), matHull, Color(180, 188, 187), 255)
 	end
 
-	-- Dashboard and pilot chair are inside the canopy; the real player occupies
-	-- the hidden prisoner-pod seat at the same spot.
-	DrawLocalBox(ent, Vector(-17, 0, 0), zeroAng, Vector(-12, -17, -10), Vector(13, 17, -5), Color(35, 47, 53))
-	DrawLocalBox(ent, Vector(-25, 0, 8), zeroAng, Vector(-5, -14, -13), Vector(4, 14, 12), Color(47, 58, 62))
-	DrawLocalBox(ent, Vector(27, 0, 5), zeroAng, Vector(-10, -18, -5), Vector(10, 18, 5), Color(48, 62, 66))
-	DrawLocalBox(ent, Vector(30, 0, 11), Angle(0, 0, 0), Vector(-1, -14, -1), Vector(1, 14, 1), Color(66, 207, 189))
+	-- Four compact lift pods on the underside.
+	for i = 0, 3 do
+		local angle = math.rad(45 + i * 90)
+		local x, y = math.cos(angle) * 54, math.sin(angle) * 50
+		DrawMeshPart(self.Meshes.ThrusterPod, ent, Vector(x, y, -11), Vector(1.15, 1.05, 0.7), matDarkMetal, Color(69, 78, 82), 255)
+	end
 
-	DrawPanelSeams(ent)
+	DrawPilotInterior(ent)
+	DrawSeams(ent)
 end
 
 function Renderer:DrawTranslucent(ent)
 	self:EnsureMeshes()
 
-	local seat = ent.GetPilotSeat and ent:GetPilotSeat() or nil
+	local pilot = ent.GetPilot and ent:GetPilot() or NULL
+	local seat = ent.GetPilotSeat and ent:GetPilotSeat() or NULL
 	if not IsValid(seat) then
 		seat = ent:GetNWEntity("RickSaucerSeat")
 	end
-	local driver = IsValid(seat) and seat:GetDriver() or nil
-	local active = IsValid(driver)
+	local active = IsValid(pilot) or (IsValid(seat) and IsValid(seat:GetDriver()))
 	local now = CurTime()
-	local pulse = 0.78 + math.sin(now * 5.1) * 0.12
+	local pulse = 0.8 + math.sin(now * 4.8) * 0.12
 
-	-- Keep the dome see-through from every angle so the pilot's seated pose can
-	-- be seen both by the driver and by everyone else on the server.
-	DrawMeshPart(self.Meshes.GlassDome, ent, Vector(0, 0, 15), zeroAng, Vector(1, 1, 1), matGlass, Color(95, 213, 211), active and 70 or 57)
+	-- Blue-green glass, light enough for the player's head and shoulders to be
+	-- clearly visible from outside and from the chase camera.
+	DrawMeshPart(self.Meshes.GlassDome, ent, Vector(0, 0, 15.5), Vector(1, 1, 1), matGlass, Color(103, 220, 216), active and 58 or 46)
 
-	-- Canopy glints / thin structural ribs.
-	for _, theta in ipairs({ math.rad(35), math.rad(145), math.rad(215), math.rad(325) }) do
+	-- Fine canopy ribs, positioned directly on the dome surface.
+	for _, theta in ipairs({ math.rad(42), math.rad(138), math.rad(222), math.rad(318) }) do
 		local previous
-		for step = 0, 12 do
-			local phi = (step / 12) * (math.pi * 0.5)
+		for step = 0, 14 do
+			local phi = (step / 14) * (math.pi * 0.5)
 			local radius = math.cos(phi)
-			local localPos = Vector(43 * radius * math.cos(theta), 41 * radius * math.sin(theta), 15 + 47 * math.sin(phi))
-			local worldPos = ToWorld(ent, localPos)
+			local localPos = Vector(42.6 * radius * math.cos(theta), 41.1 * radius * math.sin(theta), 15.5 + 45 * math.sin(phi))
+			local world = WorldPos(ent, localPos)
 			if previous then
-				render.DrawLine(previous, worldPos, Color(174, 248, 235, 145), false)
+				render.DrawLine(previous, world, Color(187, 255, 238, 150), false)
 			end
-			previous = worldPos
+			previous = world
 		end
 	end
 
-	-- Ring lights around the saucer: warm landing lamps plus a few cyan status LEDs.
+	-- Alternating warm landing lights and cyan status lamps around the rim.
 	render.SetMaterial(matGlow)
 	for i = 0, 11 do
 		local theta = (i / 12) * math.pi * 2
-		local localPos = Vector(math.cos(theta) * 88, math.sin(theta) * 80, -1 + math.sin(now * 3 + i) * 0.35)
-		local worldPos = ToWorld(ent, localPos)
-		local isCyan = (i % 3 == 0)
-		local color = isCyan and Color(83, 238, 222, 220) or Color(255, 193, 96, 220)
-		local size = isCyan and 12 or 10
-		render.DrawSprite(worldPos, size * pulse, size * pulse, color)
+		local localPos = Vector(math.cos(theta) * 91, math.sin(theta) * 82, 0)
+		local world = WorldPos(ent, localPos)
+		local cyan = i % 3 == 0
+		local color = cyan and Color(81, 239, 223, 220) or Color(255, 194, 95, 220)
+		local size = cyan and 11 or 9
+		render.DrawSprite(world, size * pulse, size * pulse, color)
 	end
 
-	-- Underbody ion glow and four softly pulsing lift beams.
+	-- Soft ion lift beams become brighter while somebody is piloting.
 	for i = 0, 3 do
 		local angle = math.rad(45 + i * 90)
-		local jet = Vector(math.cos(angle) * 55, math.sin(angle) * 51, -15)
-		local startPos = ToWorld(ent, jet)
-		local endPos = ToWorld(ent, jet - Vector(0, 0, active and (34 + math.sin(now * 8 + i) * 7) or 13))
-		local beamWidth = (active and 13 or 7) * (0.85 + pulse * 0.15)
+		local jet = Vector(math.cos(angle) * 54, math.sin(angle) * 50, -15)
+		local startPos = WorldPos(ent, jet)
+		local length = active and (34 + math.sin(now * 8 + i) * 5) or 12
+		local endPos = WorldPos(ent, jet - Vector(0, 0, length))
 		render.SetMaterial(matBeam)
-		render.DrawBeam(startPos, endPos, beamWidth, 0, 1, Color(82, 218, 255, active and 125 or 55))
+		render.DrawBeam(startPos, endPos, active and 10 or 6, 0, 1, Color(82, 215, 255, active and 100 or 38))
 		render.SetMaterial(matGlow)
-		render.DrawSprite(startPos, (active and 20 or 13) * pulse, (active and 20 or 13) * pulse, Color(95, 235, 255, active and 210 or 125))
+		render.DrawSprite(startPos, (active and 18 or 12) * pulse, (active and 18 or 12) * pulse, Color(95, 235, 255, active and 190 or 100))
 	end
 
 	render.SetBlend(1)
